@@ -282,13 +282,6 @@
 # #     ax2.set_ylabel("box filtered")
 #     # any box with 30% or higher overlap in vertical is merged
 #     # merge smaller below threshold with closest larger
-    
-    
-    
-    
-    
-    
-
 
 import numpy as np
 import ipdb
@@ -344,6 +337,39 @@ class Box(object):
         # Note: destroys constituent boxes!
         # TODO: implement
         pass
+
+    def split(self, x, pixel_gap=0):
+        """Split this box by provided x coordinate, if x lies in between box bounds, 
+                and return two new `Box` instances
+        
+        `pixel_gap`: artificial gap introduced between the two new boxes, equally divided into both
+
+        Returns 2 `Box` instances in sorted order by x coordinate
+
+        Note: if x lies on Box boundaries, box is not split and the 
+            `x` equivalent boundary side (left/right) of the return values is `None`
+        """
+        if self[0] < x < self[2] + self[0]:
+            coor_l = list(self[:])
+            coor_r = list(self[:])
+            
+            coor_l[2] = x - coor_l[0] - pixel_gap//2 - pixel_gap%2
+            if coor_l[2] < 0:
+                coor_l[2] = 0
+            
+            coor_r[0] = x + pixel_gap//2
+            coor_r[2] = (self[0] + coor_r[2]) - coor_r[0]
+            if coor_r[2] < 0:
+                coor_r[2] = 0
+                coor_r[0] = (self[0] + self[2])
+
+            return Box(coor_l), Box(coor_r)
+        elif self[0] == x:
+            return None, self
+        elif self[2] + self[0] == x:
+            return self, None     
+        else:
+            raise ValueError("`Box` can't be split by unenclosed `x` value")
 
     def area(self):
         return self.box[-1] * self.box[-2]
@@ -404,14 +430,19 @@ class MergedBox(object):
         return self.__str__()
     
     def __lt__(self, other):
-        """for sorting and box comparisions, comparing by x coordinate"""
-        return self.box < other.box
+        """for sorting and box comparisions, comparing by x coordinate
+        # `other` may be instance of Box/MergedBox
+        """
+        return self.box < MergedBox.get_mbox_obj(other).box
 
-    # def __getitem__(self, key):
-    #     return self.boxes[key]
+    def __getitem__(self, key):
+        """Access internal boxes directly"""
+        return self.boxes[key]
 
-    # def __iter__(self):
-    #     return self.boxes
+    def __iter__(self):
+        """Provides iteraton across sorted sequence of internal boxes"""
+        self.sort()
+        return self.boxes
 
     @property
     def box(self):
@@ -438,7 +469,7 @@ class MergedBox(object):
             boxes = boxes.boxes
         elif type(boxes) is Box:
             boxes = [boxes, ]
-        elif boxes: 
+        elif boxes:
             if ((type(boxes[0]) is not tuple) and (type(boxes[0]) is not list)):
                 # if boxes is non empty and first element of boxes is non iterable, implies: boxes is single
                 # tuple of coordinates or boxes is list of Box/MergedBox objects            
@@ -470,14 +501,10 @@ class MergedBox(object):
 
     @staticmethod
     def get_mbox_obj(b_obj):
-        if type(b_obj) in MergedBox:
-            box = b_obj
-        elif type(b_obj) is Box:
-            boxes = [b_obj, ]
+        if type(b_obj) is MergedBox:
+            return b_obj
         else:
-            # assuming b_obj is a tuple of box coordinates
-            boxes = [Box(b_obj), ]
-        return boxes
+            return MergedBox(b_obj)
 
     def __add__(self, b_obj):
         """b_obj can be instance of MergedBox/Box
@@ -512,8 +539,13 @@ class MergedBox(object):
         if not self.boxes:
             return Box([0, 0, 0, 0])
         cur = self.boxes[0]
+        if type(cur) is MergedBox:
+            cur = cur.box
         for i in range(1, len(self.boxes)):
-            cur = cur.merge(self.boxes[i])
+            nx = self.boxes[i]
+            if type(nx) is MergedBox:
+                nx = nx.box
+            cur = cur.merge(nx)
         return cur
 
     def merge(self, b_obj):
@@ -530,6 +562,7 @@ class MergedBox(object):
         return sum(map(lambda b: b.area(), self.boxes))
     
     def sort(self):
+        # TODO: implement caching
         # sort all internal boxes as per `x` start
         self.boxes.sort()
     
@@ -561,16 +594,6 @@ class MergedBox(object):
             bp = self.boxes[b]
         return overlaps
     
-    def bifurcate(self, discard=False):
-        """divides the box into two boxes by sensible overlap heuristic (minimize overlap?)"""
-        pass
-    
-    def area_thresh(self, area_thresh):
-        """applies area threshold on itself and returns Bool
-            # TODO: figure out whether to do on superbox or true area?
-        """
-        pass
-    
     def can_merge(self, b_obj):
         """returns whether merge possible with b_obj after applying overlap threshold
 
@@ -589,8 +612,142 @@ class MergedBox(object):
             if type(box) is MergedBox:
                 flat.extend(box.flatten())
             else:
-                flat.append(box.box)
+                flat.append(box)
         return flat
+
+    def recursive_tree_split(self, x):
+        """Splits the entire tree by x value into two distinct trees
+
+        Doesn't create new boxes unless x lies in between the bounds of a leaf node
+        This methods preserves Heirarchial information
+        """
+        self.sort()
+        split_i, bl, br = None, None, None # split index, box_left, box_right
+
+        for i, el in enumerate(self.boxes):
+            # comparing by x coordinate only, taking first containing unit
+            if el.box[0] <= x <= el.box[0] + el.box[2]:
+                if type(el) is MergedBox:
+                    bl, br = el.recursive_tree_split(x)
+                else:
+                    # Found atomic split location!
+                    # This is an instance of Box class
+                    bl, br = el.split(x, pixel_gap=1)
+                split_i = i
+                break
+            elif el.box[0] < x:
+                # handling disjoint fragmented boxes member case
+                bl = i
+            elif el.box[0] > x and (br is None):
+                # handling disjoint fragmented boxes member case
+                br = i
+
+        if split_i is not None or (bl is not None and br is not None):
+            if split_i is not None:
+                # skipping ith element is left or right as it has been split into two
+                boxes_l = self.boxes[:split_i] + ([bl, ] if bl else [])
+                boxes_r = ([br, ] if br else []) + self.boxes[split_i+1:]
+            else:
+                boxes_l = self.boxes[:bl+1]
+                boxes_r = self.boxes[br:]
+                # TODO: remove debug output
+                if br > bl + 1:
+                    print("\n \n @Tree Split Anomally Detected! \n \n")
+            left, right = [(MergedBox(boxes) if boxes else None) for boxes in [boxes_l, boxes_r]]
+            return left, right
+        else:
+            raise ValueError("`MergedBox` can't be split by unenclosed `x` value")
+
+    def bifurcate(self, discard=False):
+        """divides the box into two boxes by sensible overlap heuristic (minimize overlap?)"""
+        pass
+    
+    def area_thresh(self, area_thresh):
+        """applies area threshold on itself and returns Bool
+            # TODO: figure out whether to do on superbox or true area?
+        """
+        pass
+
+    def split_by_best_node_candidate(self, split_scorer_func=None, peaks=None, project=None, peak_widths_l=None, peak_base_heights=None):
+        """
+        split scorer func: returns score or True to split from here?
+        """
+        flat = self.flatten()
+        flat.sort()
+        from scipy import stats
+        z_score_widths, z_score_heights = [stats.zscore(param) for param in zip(*list(map(lambda x: (x[2], x[3]), flat)))]
+        heights = list(map(lambda x: x[3], flat))
+        widths = list(map(lambda x: x[2], flat))
+        h_mean, h_std = np.mean(heights), np.std(heights)
+        w_mean, w_std = np.mean(widths), np.std(widths)
+        distances = []
+        rel_heights = []
+        peak_counts = []
+        peak_imp = []
+        # TODO: push import to top
+        # TODO: replace other z score calculations by stats.zscore
+        if flat:
+            for i in range(1, len(flat)):
+                # distance is -ve of overlap
+                distances.append(-flat[i-1].overlap(flat[i]))
+                rel_heights.append(heights[i-1]/heights[i] if heights[i-1] < heights[i] else heights[i]/heights[i-1])
+            
+            if peaks:
+                p_i = 0
+                peaks_in_boxes = []
+                for f in flat:
+                    (x, y, w, h) = f
+                    peaks_in_boxes.append([])
+                    while p_i < len(peaks) and peaks[p_i] <= x+w:
+                        # check apply higher threshold? use higher gaussian kernel?
+                        peak_imp_score = peak_widths_l[p_i] * (project[peaks[p_i]] - peak_base_heights[p_i])
+                        if x <= peaks[p_i] <= x+w:
+                            peaks_in_boxes[-1].append((peaks[p_i], peak_imp_score))
+                        else:
+                            # peak wasted!
+                            pass
+                        p_i += 1
+                peak_counts = [len(x) for x in peaks_in_boxes]
+                peak_imp = [(int(sum(list(zip(*x))[1])/1) if x else 0) for x in peaks_in_boxes]
+
+        hrep = "Height(Mean: {}, std: {})".format(h_mean, h_std)
+        wrep = "Width(Mean: {}, std: {})".format(w_mean, w_std)
+        
+        # caching results: box report
+        self.brep = z_score_widths, z_score_heights, distances, rel_heights, peaks_in_boxes, peak_counts, peak_imp, heights, flat
+
+        return hrep, wrep, z_score_widths, z_score_heights, distances, rel_heights, peak_counts, peak_imp, heights
+
+    def split_node(self, discard_noise=True):
+        dist_thresh = 2
+        height_thresh = 0.75
+        noise_thresh = 3
+        split = False
+        x_split = None
+        if self.brep:
+            # getting box reports previously computed
+            z_score_widths, z_score_heights, distances, rel_heights, peaks_in_boxes, peak_counts, peak_imp, heights, flat = self.brep
+            if distances:
+                bst = np.argmax(distances)
+                if bst > dist_thresh:
+                    if rel_heights[bst] > height_thresh:
+                        x_split = flat[bst].box[0] + flat[bst].box[2]
+                        split = True
+        if not split:
+            # TODO: attempt peakwise split
+            # just splitting by half for now
+            x_split = self.box[0] + self.box[2]//2
+
+        if x_split is not None:
+            b1, b2 = self.recursive_tree_split(x_split)
+            if discard_noise:
+                if b1.box[2] < noise_thresh: 
+                    b1 = None
+                elif b2.box[2] < noise_thresh:
+                    b2 = None
+            return b1, b2
+
+        return None
     
     def peaks(self):
         pass
@@ -605,6 +762,7 @@ class MergedBox(object):
 
 boxes = [(21, 23, 3, 3), (93, 21, 7, 6), (77, 11, 12, 17), (112, 9, 16, 20), (98, 9, 11, 19), (58, 9, 12, 18), (60, 10, 9, 16), (154, 8, 13, 21), (39, 8, 13, 21), (42, 17, 9, 11), (187, 7, 17, 25), (188, 8, 15, 14), (132, 7, 16, 21), (141, 15, 3, 3), (170, 6, 17, 23), (176, 7, 10, 12), (26, 6, 9, 23)]
 print(len(boxes))
+
 
 
 
@@ -746,6 +904,14 @@ bbs = test_bb(bbs)
 # # print(boxes)
 # # print(bbs)
 # print(len(bbs))
+
+# recursive tree split test
+print(bbs)
+print(id(bbs[1]))
+bbs[1] += bbs[2] + bbs[5]
+l, r = bbs[1].recursive_tree_split(37)
+print("split here", l, r)
+print(id(l), id(r))
 
 res = [(21, 23, 3, 3), (26, 6, 9, 23), (39, 8, 13, 21), (58, 9, 12, 18), (77, 11, 12, 17), (93, 21, 7, 6), (98, 9, 11, 19), (112, 9, 16, 20), (132, 7, 16, 21), (154, 8, 13, 21), (170, 6, 17, 23), (187, 7, 17, 25)]
 pprint.pprint(list(zip(bbs, res)), indent=2)
