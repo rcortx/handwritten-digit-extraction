@@ -1,269 +1,285 @@
 """
-BUG LIST:
+Setup Env: python 3.5.2
+`pip install -r requirements.txt`
 
-1. 
-projection threshold: removes all digits instead of noise
-# BUg:
-# 1602300000_ae61d5.png
-# i = 2509
-# # # ERROR in third projection used for splitting
-# horizontal noise filter removing all digits
-# solution: 
-# works awesome with process_projection_peaks(project, threshold=0.75)
-# Y THRESH 0.56 disappear
-# Y THRESH 0.57 works!
+Use:
 
-2. 
-# BUG: nan float to int conversion: fix    
-    peak_imp_l = []
-    for x in peaks_in_boxes:
-        cur = 0
-        if x:
-            cur = sum(list(zip(*x))[1])/1
-            if not math.isnan(cur):
-                  cur = int(cur)
-        peak_imp_l.append(cur)
-# prev bug source:
-#     peak_imp_l = [(int(sum(list(zip(*x))[1])/1) if x else 0) for x in peaks_in_boxes]
+>>> from aggregated_pipeline import NumberReader
+>>> nr = NumberReader()
 
+# return label after applying probability threshold, 'UNKNOWN' for uncertain
+>>> nr.read_from_filename("regions/20111823_6884a0.png")
+'UNKNOWN'
+
+# return uncertain label instead of 'UNKNOWN' for inspection (how many digits were predicted correctly)
+>>> nr.read_from_filename("regions/20111823_6884a0.png", thresh=False)
+'20111223'
 """
 
 import os
 import glob
 import math
 import pickle
-
-DIR = "regions"
-dig_classes = 10
-
-f_names = glob.glob(os.path.join(DIR, "*.png")) 
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
-
-
-# generating number labels
-def get_label(f_name):
-    return f_name.split("/")[1].split("_")[0]
-labels = list(map(get_label, f_names))
-
-# checking number lengths
-digit_lengths = set(map(len, labels))
-
-# digit map marking every digit in image_n, digit_pos tuple
-digit_map = {i:[] for i in range(dig_classes)}
-
-for i, digits in enumerate(labels):
-    for j, dig in enumerate(digits):
-        digit_map[j].append((i, j))
-        
-import cv2
-images = list(map(cv2.imread, f_names)) # BGR format
-images_gray = [cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) for image in images]
-
-def gen_subplot_group(n, cols=2, size=1.0, colsize=1.0, yield_group=1):
-    """generates index, axes tuple from figure subplots
-        generates `yield_group` axes at once
-    """
-    rows = n//cols
-    row_size_mul = 1.4 * size
-    col_size_mul = 6 * colsize
-    fig = plt.figure(figsize=(int(cols*col_size_mul), int(rows*row_size_mul)))
-    group = []
-    for i in range(1, rows*cols+1):
-        ax = fig.add_subplot(rows, cols, i)
-        group.append(ax)
-        if len(group) == yield_group:
-            yield ((i//yield_group)-1, group)
-            group = []
-
-def draw_images(images, labels, gray=False, to_rgb=True, n=10, gauss_blur_kernel=(3, 3)):
-    """
-    draws `n` images in graymap/converting to RGB from BGR
-    gray and to_rgb are mutually exclusive
-    
-    `gauss_blur_kernel`: (x, y) use Gaussian blur with this kernel size to remove noise 
-        with a Gaussian filter. x & y must be odd.
-    """
-    for i, axes in gen_subplot_group(n, size=2.0):
-        ax = axes[0]
-        args = [cv2.GaussianBlur(images[i], gauss_blur_kernel, 0), ] # cv2.GaussianBlur(gray,(3,3), 0)
-        args = [cv2.threshold(images[i], 200,255,cv2.THRESH_BINARY_INV)[1], ]
-        args = [cv2.GaussianBlur(args[0], gauss_blur_kernel, 0), ]
-        args[0] = cv2.resize(args[0], (0, 0), fx=2.0, fy=3.0)
-        # check inverting image instead of thesh
-        kwargs = {}
-        if gray: 
-            kwargs["cmap"] = "gray"
-        elif to_rgb: 
-            args[0] = args[0][:, :, ::-1]
-        plt.imshow(*args, **kwargs)
-        ax.set_xlabel(labels[i] + " : {}".format(len(labels[i])))
-        
-        
 from scipy.signal import find_peaks, peak_widths, peak_prominences
+import cv2
+from sklearn import svm, linear_model, preprocessing, metrics, model_selection, decomposition
 
-def cluster_peaks(x, peaks, peak_prom, width_results, max_width_only=False, threshold=0.5):
+DIR = "regions"
+dig_classes = 10
+
+
+def timeit(func, label=None, verbose=True):
+    """timing decorator"""
+    def func_caller(*args, **kwargs):
+        t1 = time.time()
+        ret = func(*args, **kwargs)
+        t2 = time.time()
+        verbose_cur = verbose
+        if args:
+            # checking for internal object verbose setting
+            try: 
+                verbose_cur = args[0].verbose
+            except AttributeError as e:
+                pass
+        if verbose_cur:
+            # use label if available or else function name
+            print("time taken for {}: {:.2f}s".format(label if label else func.__name__.upper(), t2-t1))
+        return ret
+    return func_caller
+
+
+class DigitClassifier(object):
+    """Classifies separated digit of a number
+    Encapsulates digit image preprocessing, transformation (PCA) and classifier
+    Currently using basic classifier: Logistic Regression with PCA(top 100)
     """
-    unsupervised clustering of peaks
-    merges overlapping peaks after applying prominence threshold
-    suppresses local minima in signals
-
-    Args:
-        `peaks`: peak indices
-        `peak_prom`: peak prominences
-        `width_results`: peak width results from scipy.signal.peak_widths
-        `max_width_only`: if True, returns only maximum width peak after merging
-
-    Creates `peak_stats`: format: [(p_i, p_prom, w, w_h, st, en), ...]
-            tuples of (peak_indices, peak_prominences, peak_width, peak_base_height, start, end
-
-    Returns:
-        `peak_stats` in separated format: 
-            peak_indices, peak_prominences, peak_width, peak_base_height, start, end
-
-    # TODO: optimize by using merged candidate bool map instead of delete from array
-            optimize by changing presort according to start, end to find candidates faster
-            optimize for noise filtering: filter peaks that are on edges
-            optimize data contract binding: remove unneccary use of zip/map and improve data interoperability
-    """
-    # changing zipped tupples to list for mutability
-    peak_stats = list(map(lambda x: list(x), zip(peaks, peak_prom, *width_results)))
-    peak_stats.sort(key=lambda x: x[2], reverse=True) # sort peaks by width
-    # peaks should be merged with a parent peak of minimum width, hence sorting is required
-    # TODO: recheck efficient deletes creating dict array for O1 deletes
-    # peak_dict = {i: peak_stat for i, peak_stat in enumerate(peak_stats)}
-    count = len(peak_stats)
-
-    def remove_cand_from_cur(cur, cand):
-        """Removes overlapping but unmergable candidate peak from current peak"""
-        # change current's width and remove candidate width from it
-        # Note: changes to cur will be reflected in peak_stats list as cur is a list object
-        if cand[0] > cur[0]:
-            # candidate is right of cur, change cur_end to cand_start
-            cur[-1] = cand[-2]
-        else:
-            # candidate is left of cur, change cur_start to cand_end
-            cur[-2] = cand[-1]
-        cur[2] = cur[-1] - cur[-2]
-
-    for i in reversed(range(len(peak_stats)-1)):
-        cur = peak_stats[i]
-        merged = []
-        # iterating through every peak with width less than that of current peak
-        # to find merge candidates
-        for j in range(i+1, count):
-            cand = peak_stats[j]
-            # if start and end of candidate peak lies between start and end of current peak
-            # try to merge with current after applying threshold
-
-
-            if cand[-2] >= cur[-2] and cand[-1] <= cur[-1]:
-                # if prominence height of candidate is less than threshold fraction
-                # of that of current peak -> merge
-                if cand[1] < threshold * cur[1]:
-                    # if base height of candidate is atleast threshold fraction of cur peak height
-                    # implies candidate peak is close to current peak in height
-                    if cand[3] >= x[cur[0]] * (1 - threshold):
-                        merged.append(j)
-                    else:
-                        # can't merge candidate peak, removing it's edges from current peak
-                        remove_cand_from_cur(cur, cand)
-                else:
-                    # peaks can't be merged, calculate true width of current
-                    t_cur_w = cur[2] - cand[2]
-                    # find if current peak is left or right of candidate
-                    if cur[0] > cand[0]:
-                        # current is right of cand, true width is cur_end - cand_end
-                        t_cur_w = cur[-1] - cand[-1]
-                    else:
-                        # current is left of cand, true width is cand_start - cur_start
-                        t_cur_w = cand[-2] - cur[-2]
-                    # if true width of current is less than candidate, merge current into candidate
-                    # while trimming any non-overlapping edges -> just delete current instead
-                    if t_cur_w < cand[2]:
-                        pass
-                        # TODO: merge current? remove false peak: narrow but peakier? 
-                        # merged.append(i)
-                    remove_cand_from_cur(cur, cand)
-
-
-        # performing merge: just removing merged candidates from peak_dict
-        # sorting merge list to delete largest index first
-        merged.sort(reverse=True)
-        for j in merged:
-            del peak_stats[j]
-            count -= 1
-            
-    if max_width_only:
-        peak_stats = [max(peak_stats, key=lambda x: x[2]), ]
-
-    return list(zip(*peak_stats))
-        
-def process_projection_peaks(x, ax=None, ax_plot_diff=None, *args, **kwargs):
-    """Finds peaks in projection, clusters them according to prominence and returns
-        can also plot signal (pre/post clustering) as per axes provided
-    Args:
-        `x`: 1D projection of signal
-        `ax`: plt axis to visualize peaks post clustering
-        `ax_plot_diff`: plt axis to visualize peaks pre clustering
-    Returns:
-        `res`: [peaks, peak_widths_l, peak_base_heights, starts, ends]
-    """
-    def plot_peaks(ax, peaks, width_res):
-        ax.plot(x, color="y")
-        ax.plot(peaks, x[peaks], "x")
-        ax.hlines(*width_res[1:], color="red")
-        
-        
-    peaks, _ = find_peaks(x)
-    peak_prom = peak_prominences(x, peaks)[0]
-    width_res = peak_widths(x, peaks, rel_height=1)
-    # format: p_i, p_prom, w, w_h, st, en
     
-    if ax_plot_diff:
-        plot_peaks(ax_plot_diff, peaks, width_res)
-        ax_plot_diff.set_ylabel("Pre Clustering")
-
-    peaks, peak_prom, peak_widths_l, peak_base_heights, starts, ends = cluster_peaks(x, peaks, peak_prom, width_res, *args, **kwargs)
-
-    res = [peaks, peak_widths_l, peak_base_heights, starts, ends]
-    if ax:
-        peaks = np.array(peaks)
-        plot_peaks(ax, peaks, list(res[1:]))
-        ax.set_ylabel("Post Clustering")
-        
-    return res
-
-def plot_projections(images_gray, labels=None, n=10, axis=1, plot_diff=False, *args, **kwargs):
-    """plots vertical/horizontal projections (sum of pixels) for grayscale images
-        after performing peak clustering 
-        # TODO: documentation
-    """    
-    if plot_diff:
-        n = 2*n
-
-    for i, axes in gen_subplot_group(n, size=2.5, yield_group=(1+plot_diff)):
-        # TODO: streamline experimental image pre processing pipeline
-        ret, thresh = cv2.threshold(images_gray[i], 200, 255,cv2.THRESH_BINARY_INV)
-        blur_img = cv2.GaussianBlur(thresh, (5, 3), 0)
-        
-        # TODO: deprecated. 
-        # scaled_image = (images_gray[i]) / 255
-        
-        # scaling image for better visualizations
-        scaled_image = blur_img - 255
-        project = np.sum(scaled_image, axis=axis)
-        
-        process_projection_peaks(project, *reversed(axes), *args, **kwargs)
+    PCA_N_COMPS = 100
+    CACHE_FILE = "pipeline.pkl" # saves trained transformer and classifier to this file
+    
+    def __init__(self, load_from_cache=False, transformer=None, classifier=None, verbose=True):
+        self.transformer = transformer if transformer else decomposition.PCA(n_components=DigitClassifier.PCA_N_COMPS) 
+        self.classifier = classifier if classifier else linear_model.LogisticRegression()
+        self.predict_ready = False
+        self.verbose = verbose
+    
+    def log(self, msg):
+        if self.verbose:
+            print(msg)
+    
+    def save(self):
+        with open(DigitClassifier.CACHE_FILE, 'wb') as fd:
+            pickle.dump([self.transformer, self.classifier, ], fd)
+            self.log("Classifier saved to disk.")
             
-        print(labels[i])
+    def load(self):
+        if self.predict_ready:
+            self.log("Classifier is pre-trained and ready to predict.")
+            return
+        if os.path.isfile(DigitClassifier.CACHE_FILE):
+            with open(DigitClassifier.CACHE_FILE, 'rb') as fd:
+                self.transformer, self.classifier = pickle.load(fd)
+                self.log("classifier loaded from cache file.")
+                self.predict_ready = True
+                return True
+        self.log("Classifier cache file unavailable.")
+        return False
+    
+    def preprocess_data(self, X):
+        n_samples = len(X)
+        X = np.array(X, dtype=np.uint8)
+        X = X.reshape(n_samples, -1)
+        return X
+    
+    def preprocess_transform_data(self, X):
+        """preprocess and transform, without fitting transformer"""
+        X = self.preprocess_data(X)
+        X = self.transformer.transform(X)
+        return X
+    
+    def preprocess_labels(self, y):
+        """conversion to `int`"""
+        y = list(map(int, y))
+        return y
+    
+    @timeit
+    def train(self, X, y):
+        """train on whole dataset"""
+        X = self.preprocess_data(X)
+        X = self.transformer.fit_transform(X)
+        y = self.preprocess_labels(y)
+        self.classifier.fit(X, y)
+        self.save()
+        self.predict_ready = True
+    
+    def predict(self, X):
+        if not self.predict_ready:
+            self.load()
+        X = self.preprocess_transform_data(X)
+        return self.classifier.predict(X)
+    
+    def predict_probabilities(self, X):
+        """returns predicted probabilities instead of classes"""
+        if not self.predict_ready:
+            self.load()
+        X = self.preprocess_transform_data(X)
+        return self.classifier.predict_proba(X)
+    
+    def predict_single(self, x):
+        if not self.predict_ready:
+            self.load()
+        # TODO: validate
+        X = self.preprocess_transform_data([x, ])
+        return self.classifier.predict(X)
+    
+    @timeit
+    def evaluate(self, X, y):
+        """For testing different transformers and classifiers. 
+        Ouputs classification report and confusion matrix"""
+        X = self.preprocess_data(X)
+        y = self.preprocess_labels(y)
+        predicted = self.classifier.predict(X)
+        self.log("Classification report for classifier %s:\n%s\n"
+              % (self.classifier, metrics.classification_report(y, predicted)))
+        self.log("Confusion matrix:\n%s" % metrics.confusion_matrix(y, predicted))
         
-        for ax in axes:
-            ax.set_xlabel(labels[i] + " : {}".format(len(labels[i])))
+    @timeit
+    def train_test(self, X, y):
+        """train and evaluate convenience function"""
+        X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.1, shuffle=True, stratify=y)
+        self.train(X_train, y_train)
+        self.evaluate(X_test, y_test)
+
+
+class NumberReader(object):
+    """
+    Number Reading class
+
+    Thresholds computed using mean, max values and std dev 
+    of incorrect/accuracte digit classifications
+    """
+    THRESH_99 = 0.948026661481
+    THRESH_CORRECT_PROB_MU = 0.805628253442
+    THRESH_INCORRECT_PROB_MU = 0.597240586805
+    THRESH_INCORRECT_TEST = 0.75
+    UNKNOWN_LABEL = "UNKNOWN"
+    
+    def __init__(self, digit_classifier=None):
+        self.digit_classifier = digit_classifier if digit_classifier else DigitClassifier()
+    
+    def read_from_grayscale(self, image_gray):
+        """image_gray has to be in grayscale"""
+        digit_images = get_separated_digits(image_gray)
+        predictions = self.digit_classifier.predict(digit_images)
+        return "".join(map(str, predictions))
+    
+    def read_from_grayscale_with_proba(self, image_gray):
+        digit_images = get_separated_digits(image_gray)
+        probs = self.digit_classifier.predict_probabilities(digit_images)
+        predictions = self.digit_classifier.predict(digit_images)
+        # TODO: optimize: get class from probabilities
+        # predictions = list(map(lambda x: np.argmax(x), probs))
+        return "".join(map(str, predictions)), probs
+    
+    def read_from_grayscale_with_thresh(self, image_gray):
+        digit_images = get_separated_digits(image_gray)
+        probs = self.digit_classifier.predict_probabilities(digit_images)
+        predictions = list(map(lambda x: np.argmax(x), probs))
+        mxp = list(map(lambda x: x[np.argmax(x)], probs))
+        
+        if all(map(lambda x: x>NumberReader.THRESH_INCORRECT_PROB_MU, mxp)):
+            res = "".join(map(str, predictions))
+        else:
+            res = NumberReader.UNKNOWN_LABEL
             
+        return res
+    
+    def read_from_image(self, image, thresh=True):
+        """image has to be in BGR format"""
+        image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        if thresh:
+            return self.read_from_grayscale_with_thresh(image_gray)
+        return self.read_from_grayscale(image_gray)
+        
+    def read_from_filename(self, filename, thresh=True):
+        if not os.path.isfile(filename):
+            print("File doesn't exist!")
+            raise ValueError("Incorrect filename.")
+        image = cv2.imread(filename) # BGR format
+        return self.read_from_image(image, thresh)
+
+    def evaluate_thresh(self, images_gray, labels):
+        """evaluates number errors, unknowns and correct labels with threshold"""
+        count = 0
+        incorrect = []
+        correct = []
+        unknowns = []
+        for i, (img_g, label) in enumerate(zip(images_gray, labels)):
+            predicted = self.read_from_grayscale_with_thresh(img_g)
+            if predicted == label:
+                correct.append((i, label))
+            elif predicted == NumberReader.UNKNOWN_LABEL:
+                unknowns.append((i, label, predicted))
+            else:
+                incorrect.append((i, label, predicted))
+            count += 1
+        print("incorrect: {} - {}%; count: {}".format(len(incorrect), len(incorrect)/count*100, count))
+        print("unknowns: {} - {}%; count: {}".format(len(unknowns), len(unknowns)/count*100, count))
+        print("correct: {} - {}%; count: {}".format(len(correct), len(correct)/count*100, count))
+
+    def generate_prediction_probability_stats(self, images_gray, labels):
+        """generates digit probability score stats for incorrect and correct labels
+        Used to compute viable thresholds
+        """
+        incorrect = []
+        correct = []
+        for i, (img_g, label) in enumerate(zip(images_gray, labels)):
+            predicted, probabilities = self.read_from_grayscale_with_proba(img_g)
+            if predicted == label or predicted == NumberReader.UNKNOWN_LABEL:
+                correct.append((i, label, probabilities))
+            else:
+                incorrect.append((i, label, predicted, probabilities))
+            count += 1
+            
+        correct_digit_count = 0
+        incorrect_digit_count = 0
+        incorrect_p_stats = []
+        for i, label, pred, prob in incorrect:
+            label = list(map(int, list(label)))
+            for l, p in zip(label, prob):
+                mxp = p[np.argmax(p)]
+                mu = np.mean(p)
+                sigma = np.std(p)
+                if l != np.argmax(p):
+                    incorrect_digit_count += 1
+                    incorrect_p_stats.append((mxp, mu, sigma))
+                else: 
+                    correct_digit_count += 1
+                    correct_p_stats.append((mxp, mu, sigma))
+
+        correct_p_stats = []
+        for i, label, prob in correct:
+            for p in prob:
+                mxp = p[np.argmax(p)]
+                mu = np.mean(p)
+                sigma = np.std(p)
+                correct_p_stats.append((mxp, mu, sigma))
+                
+        for st in [incorrect_p_stats, correct_p_stats]:
+            mx, mu, sigma = list(zip(*st))
+            print(len(mx), len(mu), len(sigma))
+            print("mx: ", np.mean(mx), np.std(mx))
+            print("mu: ", np.mean(mu), np.std(mu))
+            print("sigma: ", np.mean(sigma), np.std(sigma))   
+
+
 class Box(object):
+    """Flexible Wrapper around a cv2 bounding box (x, y, w, h)"""
 
     OVERLAP_X_EXTEND = 0 # pixels to virtually extend width to consider overlap
     
@@ -388,14 +404,14 @@ class Box(object):
 
 
 class MergedBox(object):
-    """MergedBox class to facilitate merging and holding multiple bounding box coordinates
+    """
+    MergedBox class to facilitate merging and holding multiple bounding box coordinates
     
-    heirarchial structure: may hold multiple Box/MergedBox objects
+    Hierarchial Tree structure: may hold multiple Box/MergedBox objects
     
     class design has been focused on seamless interoperability beween Box and MergedBox 
         instances in terms of add/merge, area and overlap computations
     """
-    
     
     OVERLAP_X_THRESH = 0.5 # fraction of width overlap required to consider merging
 
@@ -410,7 +426,7 @@ class MergedBox(object):
     
     def __lt__(self, other):
         """for sorting and box comparisions, comparing by x coordinate
-        # `other` may be instance of Box/MergedBox
+        `other` may be instance of Box/MergedBox
         """
         return self.box < MergedBox.get_mbox_obj(other).box
 
@@ -440,7 +456,8 @@ class MergedBox(object):
         self.boxes = boxes
         
     def __init__(self, boxes=[]):
-        """boxes can be MergedBox/Box instance, list of Box/MergedBox instances, list of tuples of box coordinates, or single tuple of box coordinates"""
+        """boxes can be MergedBox/Box instance, list of Box/MergedBox instances, 
+        list of tuples of box coordinates, or single tuple of box coordinates"""
         # TODO: box label encapsulation, update in init args, add, sub
         # TODO: add support to hold peaks
         
@@ -467,6 +484,7 @@ class MergedBox(object):
     
     @staticmethod
     def get_box_list(b_obj):
+        """returns list of boxes according to b_obj provided"""
         if type(b_obj) is MergedBox:
             boxes = b_obj.boxes
         elif type(b_obj) is Box:
@@ -480,6 +498,7 @@ class MergedBox(object):
 
     @staticmethod
     def get_mbox_obj(b_obj):
+        """converts b_obj to MergedBox instance"""
         if type(b_obj) is MergedBox:
             return b_obj
         else:
@@ -491,12 +510,9 @@ class MergedBox(object):
         # TODO: modify add behaviour: 
         """
         # return MergedBox(self.boxes + MergedBox.get_box_list(b_obj))
-        
         # self.boxes.append(b_obj)
-
         return MergedBox(self.boxes + [b_obj, ])
 
-    
     def __sub__(self, b_obj):
         """b_obj can be instance of MergedBox/Box or list of box coordinates"""
         # assuming common box elements are same array objects
@@ -510,9 +526,7 @@ class MergedBox(object):
         if b_obj in boxes:
             boxes.remove(b_obj)
             return MergedBox(boxes)
-
         return MergedBox(list(set(self.boxes).difference(MergedBox.get_box_list(b_obj))))
-
 
     def internal_merge(self):
         # TODO: optimize by batch max/min
@@ -529,7 +543,6 @@ class MergedBox(object):
         return cur
 
     def merge(self, b_obj):
-        # Note: destroys constituent boxes!
         # TODO: which .box? parent vs child
         return self + b_obj
     
@@ -538,7 +551,7 @@ class MergedBox(object):
         return self.box.area()
     
     def area(self):
-        """actual area of Box by adding constituent box areas"""
+        """actual area of Box by adding constituent box areas; `self.area` <= `self.varea`"""
         return sum(map(lambda b: b.area(), self.boxes))
     
     def sort(self):
@@ -550,7 +563,6 @@ class MergedBox(object):
         """overlap between MergedBox objects
         simple horizontal overlap logic: upgrade to vertical overlap or 
             fragmented `true` overlap as MergedBox constitutents may be discontinous
-
 
         `b_obj` can be MergedBox/Box instance or coordinate list as Box.overlap takes care of this
         """
@@ -640,11 +652,16 @@ class MergedBox(object):
 
     def get_split_scores(self, peaks=None, project=None, peak_widths_l=None, peak_base_heights=None):
         """
-        split scorer func: returns score or True to split from here?
+        returns split scores for this Box.
+        Used to split a bounding box which could be holding multiple digits
+
+        Feature engineered stats include: (of constituent boxes)
+        z_score_widths, z_score_heights, distances, rel_heights, peak_counts, peak_imp, heights
+
+        # TODO: restructure and improve data contract
         """
         flat = self.flatten()
         flat.sort()
-        from scipy import stats
         z_score_widths, z_score_heights = [stats.zscore(param) for param in zip(*list(map(lambda x: (x[2], x[3]), flat)))]
         heights = list(map(lambda x: x[3], flat))
         widths = list(map(lambda x: x[2], flat))
@@ -717,7 +734,6 @@ class MergedBox(object):
                 elif b2.box[2] < noise_thresh:
                     b2 = None
             return b1, b2
-
         return None
     
     def distance(self, other):
@@ -738,16 +754,14 @@ class MergedBox(object):
         width = self.box[2]
         height = self.box[3]
         constituent_boxes = self.flatten()
-        
+    
         # Note: image height and width are reversed in numpy as height corresponds to num rows: axis 0
         cut_img = np.zeros(shape=(MergedBox.MAX_HEIGHT, MergedBox.MAX_WIDTH), dtype=np.uint8)
-
         # dealing with anomally: single digit width > MAX_WIDTH
         if width > MergedBox.MAX_WIDTH:
             # print("box width anomally! Truncating box")
             constituent_boxes = [Box([x_start, y_start, MergedBox.MAX_WIDTH, height, ]), ]
             width = MergedBox.MAX_WIDTH
-        
         # centering training data
         w_offset = (MergedBox.MAX_WIDTH - width) // 2
         h_offset = (MergedBox.MAX_HEIGHT - height) // 2
@@ -757,7 +771,6 @@ class MergedBox(object):
             cut_img[y-y_start+h_offset:y+h-y_start+h_offset, x-x_start+w_offset:x+w-x_start+w_offset] = image[y:y+h, x:x+w]
 
         return cut_img
-
 
     def peaks(self):
         pass
@@ -772,23 +785,245 @@ class MergedBox(object):
         pass
 
 
-"""
+# generating number labels
+def get_label(f_name):
+    return f_name.split("/")[1].split("_")[0]
+
+
+def get_digit_map(labels):
+    # digit map marking every digit in image_n, digit_pos tuple
+    digit_map = {i:[] for i in range(dig_classes)}
+
+    for i, digits in enumerate(labels):
+        for j, dig in enumerate(digits):
+            digit_map[j].append((i, j))
+    return digit_map
+
+
+def get_grayscale_images_labels():
+    """loads images, converts to grayscale and extracts labels"""
+    f_names = glob.glob(os.path.join(DIR, "*.png")) 
+    labels = list(map(get_label, f_names))
+
+    # checking number lengths
+    # digit_lengths = set(map(len, labels))
+    images = list(map(cv2.imread, f_names)) # BGR format
+    images_gray = [cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) for image in images]
+
+    return images_gray, labels
+
+
+def gen_subplot_group(n, cols=2, size=1.0, colsize=1.0, yield_group=1):
+    """generates index, axes tuple from figure subplots
+        generates `yield_group` axes at once
+    """
+    rows = n//cols
+    row_size_mul = 1.4 * size
+    col_size_mul = 6 * colsize
+    fig = plt.figure(figsize=(int(cols*col_size_mul), int(rows*row_size_mul)))
+    group = []
+    for i in range(1, rows*cols+1):
+        ax = fig.add_subplot(rows, cols, i)
+        group.append(ax)
+        if len(group) == yield_group:
+            yield ((i//yield_group)-1, group)
+            group = []
+
+
+def draw_images(images, labels, gray=False, to_rgb=True, n=10, gauss_blur_kernel=(3, 3)):
+    """
+    draws `n` images in graymap/converting to RGB from BGR
+    gray and to_rgb are mutually exclusive
+    
+    `gauss_blur_kernel`: (x, y) use Gaussian blur with this kernel size to remove noise 
+        with a Gaussian filter. x & y must be odd.
+    """
+    for i, axes in gen_subplot_group(n, size=2.0):
+        ax = axes[0]
+        args = [cv2.GaussianBlur(images[i], gauss_blur_kernel, 0), ] # cv2.GaussianBlur(gray,(3,3), 0)
+        args = [cv2.threshold(images[i], 200,255,cv2.THRESH_BINARY_INV)[1], ]
+        args = [cv2.GaussianBlur(args[0], gauss_blur_kernel, 0), ]
+        args[0] = cv2.resize(args[0], (0, 0), fx=2.0, fy=3.0)
+        # check inverting image instead of thesh
+        kwargs = {}
+        if gray: 
+            kwargs["cmap"] = "gray"
+        elif to_rgb: 
+            args[0] = args[0][:, :, ::-1]
+        plt.imshow(*args, **kwargs)
+        ax.set_xlabel(labels[i] + " : {}".format(len(labels[i])))
+        
+        
+def cluster_peaks(x, peaks, peak_prom, width_results, max_width_only=False, threshold=0.5):
+    """
+    unsupervised clustering of peaks
+    merges overlapping peaks after applying prominence threshold
+    suppresses local minima in signals
+
+    Args:
+        `peaks`: peak indices
+        `peak_prom`: peak prominences
+        `width_results`: peak width results from scipy.signal.peak_widths
+        `max_width_only`: if True, returns only maximum width peak after merging
+
+    Creates `peak_stats`: format: [(p_i, p_prom, w, w_h, st, en), ...]
+            tuples of (peak_indices, peak_prominences, peak_width, peak_base_height, start, end
+
+    Returns:
+        `peak_stats` in separated format: 
+            peak_indices, peak_prominences, peak_width, peak_base_height, start, end
+
+    # TODO: optimize by using merged candidate bool map instead of delete from array
+            optimize by changing presort according to start, end to find candidates faster
+            optimize for noise filtering: filter peaks that are on edges
+            optimize data contract binding: remove unneccary use of zip/map and improve data interoperability
+    """
+    # changing zipped tupples to list for mutability
+    peak_stats = list(map(lambda x: list(x), zip(peaks, peak_prom, *width_results)))
+    peak_stats.sort(key=lambda x: x[2], reverse=True) # sort peaks by width
+    # peaks should be merged with a parent peak of minimum width, hence sorting is required
+    # TODO: recheck efficient deletes creating dict array for O1 deletes
+    # peak_dict = {i: peak_stat for i, peak_stat in enumerate(peak_stats)}
+    count = len(peak_stats)
+
+    def remove_cand_from_cur(cur, cand):
+        """Removes overlapping but unmergable candidate peak from current peak"""
+        # change current's width and remove candidate width from it
+        # Note: changes to cur will be reflected in peak_stats list as cur is a list object
+        if cand[0] > cur[0]:
+            # candidate is right of cur, change cur_end to cand_start
+            cur[-1] = cand[-2]
+        else:
+            # candidate is left of cur, change cur_start to cand_end
+            cur[-2] = cand[-1]
+        cur[2] = cur[-1] - cur[-2]
+
+    for i in reversed(range(len(peak_stats)-1)):
+        cur = peak_stats[i]
+        merged = []
+        # iterating through every peak with width less than that of current peak
+        # to find merge candidates
+        for j in range(i+1, count):
+            cand = peak_stats[j]
+            # if start and end of candidate peak lies between start and end of current peak
+            # try to merge with current after applying threshold
+
+
+            if cand[-2] >= cur[-2] and cand[-1] <= cur[-1]:
+                # if prominence height of candidate is less than threshold fraction
+                # of that of current peak -> merge
+                if cand[1] < threshold * cur[1]:
+                    # if base height of candidate is atleast threshold fraction of cur peak height
+                    # implies candidate peak is close to current peak in height
+                    if cand[3] >= x[cur[0]] * (1 - threshold):
+                        merged.append(j)
+                    else:
+                        # can't merge candidate peak, removing it's edges from current peak
+                        remove_cand_from_cur(cur, cand)
+                else:
+                    # peaks can't be merged, calculate true width of current
+                    t_cur_w = cur[2] - cand[2]
+                    # find if current peak is left or right of candidate
+                    if cur[0] > cand[0]:
+                        # current is right of cand, true width is cur_end - cand_end
+                        t_cur_w = cur[-1] - cand[-1]
+                    else:
+                        # current is left of cand, true width is cand_start - cur_start
+                        t_cur_w = cand[-2] - cur[-2]
+                    # if true width of current is less than candidate, merge current into candidate
+                    # while trimming any non-overlapping edges -> just delete current instead
+                    if t_cur_w < cand[2]:
+                        pass
+                        # TODO: merge current? remove false peak: narrow but peakier? 
+                        # merged.append(i)
+                    remove_cand_from_cur(cur, cand)
+        
+        # performing merge: just removing merged candidates from peak_dict
+        # sorting merge list to delete largest index first
+        merged.sort(reverse=True)
+        for j in merged:
+            del peak_stats[j]
+            count -= 1
+            
+    if max_width_only:
+        peak_stats = [max(peak_stats, key=lambda x: x[2]), ]
+
+    return list(zip(*peak_stats))
+        
+def process_projection_peaks(x, ax=None, ax_plot_diff=None, *args, **kwargs):
+    """Finds peaks in projection, clusters them according to prominence and returns
+        can also plot signal (pre/post clustering) as per axes provided
+    Args:
+        `x`: 1D projection of signal
+        `ax`: plt axis to visualize peaks post clustering
+        `ax_plot_diff`: plt axis to visualize peaks pre clustering
+    Returns:
+        `res`: [peaks, peak_widths_l, peak_base_heights, starts, ends]
+    """
+    def plot_peaks(ax, peaks, width_res):
+        ax.plot(x, color="y")
+        ax.plot(peaks, x[peaks], "x")
+        ax.hlines(*width_res[1:], color="red")
+
+    peaks, _ = find_peaks(x)
+    peak_prom = peak_prominences(x, peaks)[0]
+    width_res = peak_widths(x, peaks, rel_height=1)
+    # format: p_i, p_prom, w, w_h, st, en
+    
+    if ax_plot_diff:
+        plot_peaks(ax_plot_diff, peaks, width_res)
+        ax_plot_diff.set_ylabel("Pre Clustering")
+
+    peaks, peak_prom, peak_widths_l, peak_base_heights, starts, ends = cluster_peaks(x, peaks, peak_prom, width_res, *args, **kwargs)
+
+    res = [peaks, peak_widths_l, peak_base_heights, starts, ends]
+    if ax:
+        peaks = np.array(peaks)
+        plot_peaks(ax, peaks, list(res[1:]))
+        ax.set_ylabel("Post Clustering")
+        
+    return res
+
+def plot_projections(images_gray, labels=None, n=10, axis=1, plot_diff=False, *args, **kwargs):
+    """plots vertical/horizontal projections (sum of pixels) for grayscale images
+        after performing peak clustering 
+        # TODO: documentation
+    """    
+    if plot_diff:
+        n = 2*n
+
+    for i, axes in gen_subplot_group(n, size=2.5, yield_group=(1+plot_diff)):
+        # TODO: streamline experimental image pre processing pipeline
+        ret, thresh = cv2.threshold(images_gray[i], 200, 255,cv2.THRESH_BINARY_INV)
+        blur_img = cv2.GaussianBlur(thresh, (5, 3), 0)
+        
+        # TODO: deprecated. 
+        # scaled_image = (images_gray[i]) / 255
+        
+        # scaling image for better visualizations
+        scaled_image = blur_img - 255
+        project = np.sum(scaled_image, axis=axis)
+        
+        process_projection_peaks(project, *reversed(axes), *args, **kwargs)
+            
+        print(labels[i])
+        
+        for ax in axes:
+            ax.set_xlabel(labels[i] + " : {}".format(len(labels[i])))
+            
+
+""" Notes
 # TODO: check box filter post merging, prev boxes don't need to be nullified?
         optimize for identical boxes: same tuple by object ID
-"""
-
-
 # Logic
-# overlap mergeflatten    def internal_merge(self):
-
 # area filter merge target: ignore or merge (proximity/overlap threshold before merge/ignore)
 #     merged noise: separate by distance
 # keep top `n` by area?
-
-
+"""
 
 
 def merge_routine(bbs, merge_func, passes=2):
+    """generalized merge routine for boxes"""
     # one way adjacency? as i starts from `0`, already considered `prev` at i > 0?
     # fragmented box best overlap? components instead of super? for true overlap?
     # recursive merge in adjacency window? agglomerative heirachial clustering?
@@ -804,14 +1039,13 @@ def merge_routine(bbs, merge_func, passes=2):
     bbs.sort()
     return bbs
 
+
 def get_merge_func(adjacency_window_size=1, predecessor_only=False, thresh_func=lambda x: True):
+    """returns box merger function which can be passed to `merge_routine`"""
     def merge_candidate(bbs, i, b, adjacency_window_size=1):
         lims = (i-adjacency_window_size, i+(adjacency_window_size if not predecessor_only else 0)+1)
         adjacents = [(j, bbs[j]) for j in range(*lims) \
                      if j != i and j>=0 and j<len(bbs) and bbs[j] is not None]
-
-        # for j, b2 in enumerate(adjacents):
-        #     pass
         
         if adjacents:
             # best overlap in adjacents
@@ -819,25 +1053,19 @@ def get_merge_func(adjacency_window_size=1, predecessor_only=False, thresh_func=
             
             # TODO: comment architecture philosophy
             if thresh_func(b, a):
-            #if b.can_merge(a):
                 # pushing merged box in maximum index btw i, j so it may be referenced in subsequent adjacency iterations
                 bbs[max(i, j)] = b + a
                 bbs[min(i, j)] = None
     return merge_candidate
 
+
 def box_merge_routines(bbs):
-    ###
     # Box merge routines: overlap threshold
-    ###
-    
     thresh_func = lambda x, y: x.can_merge(y)
     merge_function = get_merge_func(thresh_func=thresh_func)
     bbs = merge_routine(bbs, merge_func=merge_function, passes=1)
     
-    ###
     # Box merge routines: area Gauss filter, overlap threshold and best adjacent merge
-    ###
-    
     areas = list(map(lambda x: x.varea(), bbs))
     mean_a = np.mean(areas)
     std_a = np.std(areas)
@@ -847,19 +1075,15 @@ def box_merge_routines(bbs):
     merge_function = get_merge_func(thresh_func=thresh_func)
     bbs = merge_routine(bbs, merge_func=merge_function, passes=1)
 
-
     thresh_func = lambda x, _: x.area() <= thresh_a - std_a*0.75
     merge_function = get_merge_func(thresh_func=thresh_func)
     bbs = merge_routine(bbs, merge_func=merge_function, passes=1)
 
     return bbs
     
-ALPHA = True
-AREA_FILTERS = True
-AREA_FILTERS_2 = True
+
 Y_AXIS_PROJECTION_DEF_THRESHOLD_PREV = 0.5 # has bugs: see end of file section
 Y_AXIS_PROJECTION_DEF_THRESHOLD_TEST = 0.57
-
 def filter_horizontal_noise_yaxis_projection(project_img, mask_img):
     project = np.sum(project_img, axis=1)
     res = process_projection_peaks(project, threshold=Y_AXIS_PROJECTION_DEF_THRESHOLD_TEST)
@@ -868,29 +1092,23 @@ def filter_horizontal_noise_yaxis_projection(project_img, mask_img):
     mx_w_ind = np.argmax(peak_widths_l)
     st, en = starts[mx_w_ind], ends[mx_w_ind]
     
-    # masked = np.copy(thresh)
     mask_img[:st, :] = 0
     mask_img[en:, :] = 0
     
+
 def filter_vertical_noise_xaxis_projection(project_img, mask_img):
     project = np.sum(project_img, axis=0)
     peaks, peak_widths_l, peak_base_heights, starts, ends = process_projection_peaks(project, threshold=0.65)
     mean_width = np.mean(peak_widths_l)
     mean_height = np.mean(list(map(lambda x: project[x], peaks)))
-#     print("height: ", mean_height)
     peak_stats = list(zip(peaks, peak_widths_l, starts, ends))
     peak_stats.sort(key=lambda x: x[2] * 10000 + x[3])
     # high peak candidates are more important to be removed
     # apply peak threshold
     rem_cand = peak_stats[:5] + peak_stats[-5:] # only take edge candidates for removal
     rem_cand.sort(key=lambda x: x[1]) # sort candidates by width candidates
-#     rem_cand = rem_cand[:2] # take first two least width candidates
-#     print("shape", img_g.shape[1] / 2)
-#     print("mean width: ", mean_width)
+
     for cand in rem_cand:
-#         if labels[i] == "1300105195":
-#             print("mean widht: ", mean_width, ", mean height: ", mean_height)
-#             print("cand: ", cand, ", height: ", project[cand[0]])
         # if candidate width is less than half of mean_width
         # remove candidate from image
         # TODO: hyperparameters
@@ -902,6 +1120,7 @@ def filter_vertical_noise_xaxis_projection(project_img, mask_img):
             else: 
                 # TODO: merge filters
                 mask_img[:, cand[-2]:cand[-1]] = 0
+
 
 def get_contour_bounding_boxes(img, draw_img=None):
     im2, contours, hierarchy = cv2.findContours(img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -917,6 +1136,7 @@ def get_contour_bounding_boxes(img, draw_img=None):
                 cv2.rectangle(draw_img, (x,y), (x+w, y+h), (255,0,0), 1)
     return boxes
 
+
 def filter_by_dips(filter_targets):
     """filter boxes by maximum dips in sorted box split scores
     
@@ -930,7 +1150,6 @@ def filter_by_dips(filter_targets):
     cands = filter_targets[:np.argmax(dips)] # split by max dip in stats
     
     # cands = filter_targets[:5] # truncate to get candidates
-    
     cands.sort(key=lambda x: x[0][1], reverse=True)
     dips = [0, ]
     for i in range(1, len(cands)):
@@ -939,7 +1158,9 @@ def filter_by_dips(filter_targets):
     cands = cands[:np.argmax(dips)]
     return cands
 
+
 def get_box_reports(clone_masked, bbs):
+    """returns box reports which are used as heuristics to determine viability of box split"""
     blurred_clone = cv2.GaussianBlur(clone_masked, (3,3), 0)
     canny_res = cv2.Canny(blurred_clone, 300, 900)
     project = np.sum(canny_res, axis=0) # clone_masked
@@ -960,13 +1181,12 @@ def get_box_reports(clone_masked, bbs):
     breps = []
     for box, bb in zip(boxes, bbs):
         
-        ####### Split candidate stats
+        # Split candidate stats
         brep = bb.get_split_scores(peaks=peaks,
                                          project=project,
                                          peak_widths_l=peak_widths_l,
                                          peak_base_heights=peak_base_heights)
         breps.append(brep)
-
         peaks_in_boxes.append([])
         (x, y, w, h) = box
         w_z_score = (w-w_mean) / w_std
@@ -986,7 +1206,9 @@ def get_box_reports(clone_masked, bbs):
         p_i += 1
     return breps, peaks_in_boxes
 
+
 def get_split_scores(breps, peaks_in_boxes):
+    """generates box split scores from box reports"""
     # needs: peaks_in_boxes, breps; returns scores
     peak_counts_l = [len(x) for x in peaks_in_boxes]
     peak_imp_l = []
@@ -997,7 +1219,7 @@ def get_split_scores(breps, peaks_in_boxes):
             if not math.isnan(cur):
                   cur = int(cur)
         peak_imp_l.append(cur)
-    # peak_imp_l = [(int(sum(list(zip(*x))[1])/1) if x else 0) for x in peaks_in_boxes]
+
     peak_counts_s = ""
     scores = []
     for j, b in enumerate(breps):
@@ -1011,11 +1233,14 @@ def get_split_scores(breps, peaks_in_boxes):
         score_2 = dscore/3 + bcount*13 + hscore*0.7 + relscore*10
 
         scores.append((score_1, score_2, j))
-        
-        # peak_counts_s += "|{:.0f}:{:.0f}:{:.0f}:{:.0f}:{:.0f}:{:.0f} ".format(peak_counts_l[j]*3, peak_imp_l[j]/2, dscore/3, bcount*13, hscore*0.7, relscore*10)
     return scores
 
+
 def filter_boxes(filters):
+    """filter boxes by applying FIXED threshold to split scores
+
+    # TODO: make thresholding more dynamic, huge accuracy gains possible
+    """
     # needs: filters, returns cands, peak_counts_s (test label)
     # from sklearn.preprocessing import MinMaxScaler
     # r = MinMaxScaler()
@@ -1029,14 +1254,14 @@ def filter_boxes(filters):
     filters = list(zip(filters, zscores))
 
     cands = filters # filter_by_dips(filters)
-    
     cands = list(filter(lambda x: x[0][0] > 50 and x[0][1] > 45, cands)) # 50, 45 # outlier: (70, 23.8) 45 close
-    
     peak_counts_s = "{}".format([("%.2f"%cands[j][0][0], "%.2f"%(cands[j][0][1]), cands[j][0][2]+1) for j, c in enumerate(cands)])
 
     return cands, peak_counts_s
 
+
 def box_split_routine(clone_masked, bbs):
+    """generic box splitting routine for boxes which may contain multiple digits"""
     # test: detect multiple peaks in conjoined images:
     breps, peaks_in_boxes = get_box_reports(clone_masked, bbs)
     # generating split scores for every Box from reports
@@ -1044,7 +1269,6 @@ def box_split_routine(clone_masked, bbs):
     
     # filtering boxes based on received scores
     cands, peak_counts_s = filter_boxes(filters)
-         
     for cand in cands:
         b_ind = cand[0][2]
         splits = []
@@ -1064,21 +1288,17 @@ def box_split_routine(clone_masked, bbs):
             bbsnew.append(bb)
     return bbsnew
 
-def get_digit_bounding_boxes(thresh, blur_img, debug=False, pyplot_axis_res=None, pyplot_axis_prev=None, label=None, return_clone=False):
+
+def get_digit_bounding_boxes(
+    thresh, blur_img, debug=False, pyplot_axis_res=None,
+    pyplot_axis_prev=None, label=None, return_clone=False):
+    """returns every digit bouding box in number image"""
     # TODO: avoid copying thresh
     masked = np.copy(thresh)
-    ###
     # y axis projection
-    ###
     filter_horizontal_noise_yaxis_projection(blur_img, masked)
-    ###
     # x axis projection
-    ###
     filter_vertical_noise_xaxis_projection(blur_img, masked)
-
-    ###
-    # Bounding box detection routines
-    ###
     
     # TODO: optimization: limit image copies
     # TODO: optimization: reuse Gaussian blurred/thresholded image for digit classification
@@ -1093,31 +1313,25 @@ def get_digit_bounding_boxes(thresh, blur_img, debug=False, pyplot_axis_res=None
     else:
         boxes = get_contour_bounding_boxes(masked)
     
-    # ALPHA TEST
     bbs = list(map(MergedBox, boxes))
     bbs = box_merge_routines(bbs)
-    ###
+
     # Box SPLIT routines: canny peaks counts/importance, box width Gauss filter
-    ###
     bbs = box_split_routine(clone_masked, bbs)
 
     if debug:
-        
         # DEBUG: image labels
         bbs.sort(key=lambda x: x.area(), reverse=False)
         
-        peak_counts_s = "{} vs found: {}, weights_z: {}".format(len(label), str(len(bbs)), list(map(lambda x: math.ceil(x*100)/100, stats.zscore(list(map(lambda x: x.varea(), bbs))))))
-        ###
+        peak_counts_s = "{} vs found: {}, weights_z: {}".format(
+            len(label),
+            str(len(bbs)),
+            list(map(lambda x: math.ceil(x*100)/100, stats.zscore(list(map(lambda x: x.varea(), bbs)))))
+        )
         
         for box in bbs:
             (x, y, w, h) = box.box
             cv2.rectangle(box_filtered, (x,y), (x+w, y+h), (255, 0, 0), 1)
-            
-        ##########  
-        
-    #     pyplot_axis.imshow(clone, cmap="gray")
-    #     pyplot_axis.set_xlabel(labels[i] + " : {}".format(len(labels[i])))
-    #     pyplot_axis.set_ylabel("boxes ori")
         
         pyplot_axis_res.imshow(box_filtered, cmap="gray")
         pyplot_axis_res.set_xlabel(peak_counts_s)
@@ -1130,7 +1344,9 @@ def get_digit_bounding_boxes(thresh, blur_img, debug=False, pyplot_axis_res=None
 
     return bbs
 
+
 def image_augmentation_pipeline(image_gray):
+    """applying Gaussian Blur and inverted binary thresholding"""
     ret, thresh = cv2.threshold(image_gray, 200, 255,cv2.THRESH_BINARY_INV)
     # Gaussian filter will remove noise, kernel size has been optimized by trial and error
     # the x projection has much higher noise fluctuations and is more affected
@@ -1138,6 +1354,7 @@ def image_augmentation_pipeline(image_gray):
     blur_img = cv2.GaussianBlur(thresh, (3, 3), 0)
 
     return thresh, blur_img
+
 
 def plot_digit_boxes(images_gray, labels, n=30): # debug function
     # TODO: pipeline image transformations and remove repetitive code
@@ -1147,23 +1364,14 @@ def plot_digit_boxes(images_gray, labels, n=30): # debug function
         thresh, blur_img = image_augmentation_pipeline(img_g)
         boxes = get_digit_bounding_boxes(thresh, blur_img, debug=True, pyplot_axis_res=ax1, pyplot_axis_prev=ax2, label=labels[i])
 
-        # labels[i] + " : {}".format(len(labels[i])) + " : " + 
-        
-        # canny_res = cv2.Canny(clone_masked, 300, 900)
-        
-    #     ax2.set_ylabel("box filtered")
-        # any box with 30% or higher overlap in vertical is merged
-        # merge smaller below threshold with closest larger
 
 def get_digit_bounding_boxes_baseline(img_thresh, blur_img, thresh=True):
+    """basline contour bounding box to establish accuracy with noise cleaning 
+        but without merge/split routines"""
     masked = np.copy(img_thresh)
-    ###
     # y axis projection
-    ###
     filter_horizontal_noise_yaxis_projection(blur_img, masked)
-    ###
     # x axis projection
-    ###
     filter_vertical_noise_xaxis_projection(blur_img, masked)
 
     boxes = get_contour_bounding_boxes(masked)
@@ -1187,7 +1395,9 @@ def get_digit_bounding_boxes_baseline(img_thresh, blur_img, thresh=True):
 
 def accuracy_boxes(images_gray, labels, baseline=False):
     """
-    20% bounding box detection error rate
+    Computes accuracy for bounding box detection algorithm
+
+    Found 20% bounding box detection error rate
     """
     processed = 0
     incorrect = 0
@@ -1195,8 +1405,6 @@ def accuracy_boxes(images_gray, labels, baseline=False):
     mxw = [0, ]
     mxh = 0
 
-    # TODO: relocate import
-    import time
     t1 = time.time()
     for i, (img, lb) in enumerate(zip(images_gray, labels)):
         img_g = images_gray[i]
@@ -1211,14 +1419,6 @@ def accuracy_boxes(images_gray, labels, baseline=False):
                 mxw.sort()
             if box.box[3] > mxh:
                 mxh = box.box[3]
-        # Bug:
-        # 1602300000_ae61d5.png
-        # i = 2509
-        # # # ERROR in third projection used for splitting
-        # horizontal noise filter removing all digits
-        # solution: 
-        # works awesome with process_projection_peaks(project, threshold=0.75)
-
         if len(boxes) != len(labels[i]):
             incorrect += 1
         processed += 1
@@ -1231,7 +1431,9 @@ def accuracy_boxes(images_gray, labels, baseline=False):
     print("% NET ERROR RATE: {0:.2f}".format(incorrect/processed*100))
     print("Max width, height of digits: ", mxw, mxh)
 
+
 def get_separated_digits(image_gray):
+    """given a grayscale number image, returns separated and normalized digit image clips"""
     thresh, blur_img = image_augmentation_pipeline(image_gray)
     clone, boxes = get_digit_bounding_boxes(thresh, blur_img, debug=False, return_clone=True)
     digit_images = []
@@ -1239,8 +1441,9 @@ def get_separated_digits(image_gray):
         digit_images.append(box.cut_from_image(clone))
     return digit_images
 
+
 def generate_digit_training_data(images_gray, labels, limit=10, skip_incorrect_data=True, cache=True):
-    """genereates separated digits and labels as training data
+    """generates separated digits and labels as training data
     
     if `skip_incorrect_data` is set, ignores all numbers for which no. of bounding boxes doesn't match label size
 
@@ -1290,8 +1493,19 @@ def generate_digit_training_data(images_gray, labels, limit=10, skip_incorrect_d
     return digit_images, digit_labels, digit_ids
 
 
+def visualize_digits(digit_images, digit_labels):
+    """visualize digit clippings"""
+    data = list(zip(digit_images, digit_labels))
+    np.random.shuffle(data)
+    for i, axes in gen_subplot_group(25, cols=5, size=2.3, colsize=1.0, yield_group=2):
+        for j, ax in enumerate(axes):
+            # ax.axis('off')
+            ax.imshow(data[i*2+j][0], cmap="gray")
+            ax.set_xlabel(data[i*2+j][1], fontsize=20)
 
 
-
-# plot_digit_boxes(images_gray, labels)
-#accuracy_boxes(images_gray, labels, baseline=True)
+def train_digit_classifier(images_gray, labels):
+    """routine to train digit classifier given grayscale images and labels"""
+    digit_images, digit_labels, digit_ids = generate_digit_training_data(images_gray, labels)
+    classifier = DigitClassifier()
+    classifier.train(digit_images, digit_labels)
