@@ -1178,7 +1178,6 @@ def get_box_reports(clone_masked, bbs):
     
     # TODO: optimization: b_widths from find contour bounding boxes
     b_widths = list(map(lambda x: x[2], boxes))
-#     b_heigh = list(map(lambda x: x[3], boxes))
     w_mean, w_std = np.mean(b_widths), np.std(b_widths)
     breps = []
     for box, bb in zip(boxes, bbs):
