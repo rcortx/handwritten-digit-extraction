@@ -9,6 +9,7 @@
 #### unsupervised peak clustering algorithm to remove horizontal/vertical noise from image. Yields pretty good results.
 
 ```
+import cv2
 from aggregated_pipeline import image_augmentation_pipeline, filter_horizontal_noise_yaxis_projection, filter_vertical_noise_xaxis_projection
 img = cv2.imread("regions/1602300000_ae61d5.png")
 label = "1602300000"
