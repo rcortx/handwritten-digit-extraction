@@ -42,23 +42,24 @@ print(mbox_left.overlap(mbox_right))
 ### Pipeline
 Currently, I have stitched together a pipeline with 
 
-0. Noise Removal:
+#### 0. Noise Removal:
     performing this via finding and merging peaks on x/y projections with provided threshold and removing noise patterns
 
-1. Unsupervised digit bounding box extraction: 80% accurate over 1% baseline accuracy
+#### 1. Unsupervised digit bounding box extraction: 
+    80% accurate over 1% baseline accuracy
     - performing this via merging and splitting Boxes with appropriate heuristics
     - Noticing that boxes will form a tree like heirarchy in an image, merging and splitting until optimum segmentation is achieved
         features were engineered which have high predictivity for finding merge and split candidates. 
     For now, thresholds are hardcoded and there's scope of using clustering algorithms like kmeans or hierarchial clustering like agglomerative
         over these features
 
-2. Digit Classifier: (basic LogisticRegression with PCA(n=100)) 83% accuracy on test set, 71% accurate on whole dataset
+#### 2. Digit Classifier: (basic LogisticRegression with PCA(n=100)) 83% accuracy on test set, 71% accurate on whole dataset
 
-3. Number Reader: 20% accurate (approx = 0.84^9) but correctly labels (70-80% of) individual digits
+#### 3. Number Reader: 20% accurate (approx = 0.84^9) but correctly labels (70-80% of) individual digits
 
 There's a lot of scope for improvement in terms of: 
 
-- Improving this Architecture: 
+#### - Improving this Architecture: 
 1. better classifier model like CNNs
 2. augmenting data to increase classification accuracy
 3. MNIST pretrained models deep learning (transfer learning)
@@ -66,7 +67,7 @@ There's a lot of scope for improvement in terms of:
 5. adding dual digit detection classes to detect conjoined digits i.e. (00) and generating data by merging two individual digits
 6. improving Bounding box clustering by leveraging the generated 
 
-- Changing Architecture:
+#### - Changing Architecture:
 1. Using moving window classifier to detect digits boundaries and digits
 2. Using LSTM with Connectionist Temporal Classification (CTC)
 3. Autoencoders: encoder/decoder-type approach
@@ -75,19 +76,24 @@ There's a lot of scope for improvement in terms of:
 https://docs.google.com/spreadsheets/d/19vBYosoy1mu7PmBCad_bZ8mePfNMGFI1C2KPwpiBASM/edit?usp=sharing
 
 #### Setup: 
-Env: `python 3.5.2`
+Env: python 3.5.2
+```
 `pip install -r requirements.txt`
 OR
 `pip install -r requirements_compressed.txt`
-
+```
 ##### Use:
+```
 >>> from aggregated_pipeline import NumberReader
 >>> nr = NumberReader()
-
+```
 ##### return label after applying probability threshold, 'UNKNOWN' for uncertain
+```
 >>> nr.read_from_filename("regions/20111823_6884a0.png")
 `'UNKNOWN'`
-
+```
 ##### return uncertain label instead of 'UNKNOWN' for inspection (how many digits were predicted correctly)
+```
 >>> nr.read_from_filename("regions/20111823_6884a0.png", thresh=False)
-`'20111223'`
+'20111223'
+```
