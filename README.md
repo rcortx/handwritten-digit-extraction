@@ -53,9 +53,12 @@ Currently, I have stitched together a pipeline with
     For now, thresholds are hardcoded and there's scope of using clustering algorithms like kmeans or hierarchial clustering like agglomerative
         over these features
 
-#### 2. Digit Classifier: (basic LogisticRegression with PCA(n=100)) 83% accuracy on test set, 71% accurate on whole dataset
+#### 2. Digit Classifier: 
+    (basic LogisticRegression with PCA(n=100)) 83% accuracy on test set, 71% accurate on whole dataset
 
-#### 3. Number Reader: 20% accurate (approx = 0.84^9) but correctly labels (70-80% of) individual digits
+#### 3. Number Reader:
+    20% accurate (approx = 0.84^9) but correctly labels (70-80% of) individual digits
+    Have used probability threshold for incorrect predictions to classify them as 'UNKNOWN' which is configurable
 
 There's a lot of scope for improvement in terms of: 
 
