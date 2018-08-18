@@ -74,6 +74,12 @@ There's a lot of scope for improvement in terms of:
 #### Some messy research notes:
 https://docs.google.com/spreadsheets/d/19vBYosoy1mu7PmBCad_bZ8mePfNMGFI1C2KPwpiBASM/edit?usp=sharing
 
+#### Setup: 
+Env: `python 3.5.2`
+`pip install -r requirements.txt`
+OR
+`pip install -r requirements_compressed.txt`
+
 ##### Use:
 >>> from aggregated_pipeline import NumberReader
 >>> nr = NumberReader()

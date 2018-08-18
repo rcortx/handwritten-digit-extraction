@@ -1,6 +1,8 @@
 """
 Setup Env: python 3.5.2
 `pip install -r requirements.txt`
+OR
+`pip install -r requirements_compressed.txt`
 
 Use:
 
