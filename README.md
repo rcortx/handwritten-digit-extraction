@@ -52,18 +52,25 @@ Currently, I have stitched together a pipeline as follows:
 #### 0. Noise Removal: Unsupervised Peak Clustering
     performing this via finding and merging peaks on x/y projections with provided threshold and removing noise patterns
 
+![alt text][noise]
 
 #### 1. Unsupervised digit bounding box extraction: 
     80% accurate on 5998 image dataset (detecting bounding boxes equal to number of digits in label)
-    - performing this via merging and splitting Boxes with appropriate heuristics
+    - First, all contours are detected in an image using opencv and encapsulated in MergedBox/Box classes
+    - Performing clustering this via merging and splitting Boxes with appropriate heuristics
     - Noticing that boxes will form a tree like heirarchy in an image, merging and splitting until optimum segmentation is achieved
         features were engineered which have high predictivity for finding merge and split candidates. 
-    For now, thresholds are hardcoded and there's scope of using clustering algorithms like kmeans or hierarchial clustering like agglomerative
+    - For now, thresholds are hardcoded and there's scope of using clustering algorithms like kmeans or hierarchial clustering like agglomerative
         over these features
+    - We split boxes which may have multiple digits conjoined like '00' by primary detecting and clustering peaks on the image x-axis projection
+    - Then separated digit images are extracted (centered and of the same size) for training 
+
 
 #### 2. Digit Classifier: 
-    Trained only on accuracte results from digit extraction algorithm
+    Trained only on accurate results from digit extraction algorithm
     (basic LogisticRegression with PCA(n=100)) 83% accuracy on test set, 71% accurate on whole dataset
+
+![alt text][class_balance]
 
 #### 3. Number Reader:
     20% accurate (approx = 0.84^9) but correctly labels (70-80% of) individual digits
@@ -72,12 +79,12 @@ Currently, I have stitched together a pipeline as follows:
 There's a lot of scope for improvement in terms of: 
 
 #### - Improving this Architecture: 
-1. better classifier model like CNNs
-2. augmenting data to increase classification accuracy
+1. Better classifier model like CNNs
+2. Augmenting data to increase classification accuracy
 3. MNIST pretrained models deep learning (transfer learning)
-4. adding two new output classes: digit-boundary class and double-digit class and generating training data for both
-5. adding dual digit detection classes to detect conjoined digits i.e. (00) and generating data by merging two individual digits
-6. improving Bounding box clustering by leveraging the engineered features with a clustering algorithm like DBSCAN, agglomerative
+4. Adding two new output classes: digit-boundary class and double-digit class and generating training data for both
+5. Adding dual digit detection classes to detect conjoined digits i.e. (00) and generating data by merging two individual digits
+6. Improving Bounding box clustering by leveraging the engineered features with a clustering algorithm like DBSCAN, agglomerative
 7. Using trained classifier to generate digit boundary scores (on areas of low threshold probabilities)
 8. Merge and Split routines can be improved by tuning thresholds further or adding more filters
 
@@ -117,3 +124,11 @@ OR
 >>> nr.read_from_filename("regions/20111823_6884a0.png", thresh=False)
 '20111223'
 ```
+
+[noise]: research_output_images/noise_removal.png "Noise Removal Results"
+[peak_cluster_y]: research_output_images/pre_post_peak_cluster_compare.png "Peak Clustering X Results"
+[peak_cluster_x]: research_output_images/x_project_pre_post_peak_cluster_compare.png "Peak Clustering Y Results"
+[first_thirty_bounding_box]: research_output_images/first30_segmented_digits_error_digit_x2.png "First Thirty Images Bounding boxes"
+[dig_sep]: research_output_images/separated_digits.png "Separated Digits Results"
+[class_balance]: research_output_images/class_balance.png "Class Balance Results"
+
