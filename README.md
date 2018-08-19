@@ -143,7 +143,7 @@ OR
 [noise]: research_output_images/noise_removal.png "Noise Removal Results"
 [peak_cluster_y]: research_output_images/pre_post_peak_cluster_compare.png "Peak Clustering X Results"
 [peak_cluster_x]: research_output_images/x_project_pre_post_peak_cluster_compare.png "Peak Clustering Y Results"
-[first_thirty_bounding_box]: research_output_images/first30_segmented_digits_error_digit_x2.png "First Thirty Images Bounding boxes"
+[first_thirty_bounding_box]: research_output_images/first30_segmented_digits_error_digit_x2_new.png "First Thirty Images Bounding boxes"
 [dig_sep]: research_output_images/separated_digits.png "Separated Digits Results"
 [class_balance]: research_output_images/class_balance.png "Class Balance Results"
 
