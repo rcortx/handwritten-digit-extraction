@@ -26,6 +26,7 @@ fig, (ax1, ax2) = plt.subplots(2)
 ax1.imshow(masked, cmap="gray")
 ax2.imshow(thresh, cmap="gray")
 ```
+
 #### MergedBox and Box classes as wrappers around opencv Bounding Boxes
 Easy to use and extensive functionality classes that support tree like hierarchy, merging, splitting, etc
 
@@ -57,18 +58,21 @@ Currently, I have stitched together a pipeline as follows:
 #### 1. Unsupervised digit bounding box extraction: 
     80% accurate on 5998 image dataset (detecting bounding boxes equal to number of digits in label)
     - First, all contours are detected in an image using opencv and encapsulated in MergedBox/Box classes
-    - Performing clustering this via merging and splitting Boxes with appropriate heuristics
-    - Noticing that boxes will form a tree like heirarchy in an image, merging and splitting until optimum segmentation is achieved
+    - Performing clustering via merging and splitting Boxes with appropriate heuristics
+    - Noticing that boxes will form a tree like hierarchy in an image, merging and splitting until optimum segmentation is achieved
         features were engineered which have high predictivity for finding merge and split candidates. 
     - For now, thresholds are hardcoded and there's scope of using clustering algorithms like kmeans or hierarchial clustering like agglomerative
         over these features
     - We split boxes which may have multiple digits conjoined like '00' by primary detecting and clustering peaks on the image x-axis projection
     - Then separated digit images are extracted (centered and of the same size) for training 
 
+![alt text][dig_sep]
 
 #### 2. Digit Classifier: 
     Trained only on accurate results from digit extraction algorithm
     (basic LogisticRegression with PCA(n=100)) 83% accuracy on test set, 71% accurate on whole dataset
+
+#####Class Balance histogram:
 
 ![alt text][class_balance]
 
@@ -124,6 +128,17 @@ OR
 >>> nr.read_from_filename("regions/20111823_6884a0.png", thresh=False)
 '20111223'
 ```
+
+### Images:
+
+#### Peak Clustering algorithm
+![alt text][peak_cluster_y]
+
+![alt text][peak_cluster_x]
+
+#### First 30 images bounding boxes
+![alt text][first_thirty_bounding_box]
+
 
 [noise]: research_output_images/noise_removal.png "Noise Removal Results"
 [peak_cluster_y]: research_output_images/pre_post_peak_cluster_compare.png "Peak Clustering X Results"
