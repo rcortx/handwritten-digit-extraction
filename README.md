@@ -44,6 +44,14 @@ mbox3 = MergedBox([mbox1, mbox2]) # can't contain
 mbox_left, mbox_right = mbox3.recursive_tree_split(x=7)
 print(mbox_left)
 print(mbox_right)
+
+mbox_merged = mbox_left + mbox_right
+print(mbox_merged, mbox3)
+
+# Note: only compares superbox for equality checks for now, not constituent boxes
+is_equal = mbox_merged == mbox3 
+print("Parent and addition box equal? ", is_equal)
+
 print(mbox_left.overlap(mbox_right))
 ```
 

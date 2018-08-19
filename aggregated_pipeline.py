@@ -303,6 +303,10 @@ class Box(object):
         """for sorting and box comparisions, comparing by x coordinate"""
         return self.box[0] < Box.get_box_obj(other).box[0]
 
+    def __eq__(self, other):
+        """for box equality comparisions, comparing all box coordinates"""
+        return all(map(lambda x, y: x==y, self.box, Box.get_box_obj(other).box))
+
     def __add__(self, other):
         """other can be instance of MergedBox/Box or list of box coordinates
         Note: destroys constituent boxes!
@@ -433,6 +437,11 @@ class MergedBox(object):
         `other` may be instance of Box/MergedBox
         """
         return self.box < MergedBox.get_mbox_obj(other).box
+
+    def __eq__(self, other):
+        """for box equality comparisions, superbox of `self` == `other`
+        """
+        return self.box == MergedBox.get_mbox_obj(other).box
 
     def __getitem__(self, key):
         """Access internal boxes directly"""
