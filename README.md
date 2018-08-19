@@ -8,8 +8,12 @@
 
 #### unsupervised peak clustering algorithm to remove horizontal/vertical noise from image. Yields pretty good results.
 
+Run in Jupyter notebook from same directory
 ```
 import cv2
+import matplotlib.pyplot as plt
+%matplotlib inline
+import numpy as np
 from aggregated_pipeline import image_augmentation_pipeline, filter_horizontal_noise_yaxis_projection, filter_vertical_noise_xaxis_projection
 img = cv2.imread("regions/1602300000_ae61d5.png")
 label = "1602300000"
@@ -24,15 +28,17 @@ ax2.imshow(thresh, cmap="gray")
 ```
 #### MergedBox and Box wrappers around opencv Bounding Boxes
 Easy to use and extensive functionality classes that support tree like hierarchy, merging, splitting, etc
+
+Run from CLI in same directory
 ```
 from aggregated_pipeline import MergedBox, Box
 x, y, w, h = 10, 10, 10, 10
 x2, y2, w2, h2 = 5, 5, 10, 10
 box = Box([x, y, w, h])
 print(box[2], box.area())
-mbox1 = MergedBox([x, y, w, h])
+mbox1 = MergedBox([x2, y2, w2, h2])
 mbox2 = MergedBox(box)
-mbox3 = MergedBox([mbox1. mbox2, box]) # can't contain 
+mbox3 = MergedBox([mbox1, mbox2]) # can't contain 
 
 mbox_left, mbox_right = mbox3.recursive_tree_split(x=7)
 print(mbox_left)
@@ -69,7 +75,8 @@ There's a lot of scope for improvement in terms of:
 3. MNIST pretrained models deep learning (transfer learning)
 4. adding two new output classes: digit-boundary class and double-digit class and generating training data for both
 5. adding dual digit detection classes to detect conjoined digits i.e. (00) and generating data by merging two individual digits
-6. improving Bounding box clustering by leveraging the generated 
+6. improving Bounding box clustering by leveraging the engineered features with a clustering algorithm like DBSCAN, agglomerative
+7. Using trained classifier to generate digit boundary scores (on areas of low threshold probabilities)
 
 #### - Changing Architecture:
 1. Using moving window classifier to detect digits boundaries and digits
@@ -79,9 +86,14 @@ There's a lot of scope for improvement in terms of:
 #### Some messy research notes:
 https://docs.google.com/spreadsheets/d/19vBYosoy1mu7PmBCad_bZ8mePfNMGFI1C2KPwpiBASM/edit?usp=sharing
 
-#### Setup: 
+#### Setup:
+```
+git clone https://github.com/rbcorx/handwritten-digit-extraction
+``` 
 Env: python 3.5.2
 ```
+cd handwritten-digit-extraction
+
 `pip install -r requirements.txt`
 OR
 `pip install -r requirements_compressed.txt`

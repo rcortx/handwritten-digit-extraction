@@ -237,6 +237,8 @@ class NumberReader(object):
     def generate_prediction_probability_stats(self, images_gray, labels):
         """generates digit probability score stats for incorrect and correct labels
         Used to compute viable thresholds
+
+        TODO: optimize: restructure loops for efficient computation
         """
         incorrect = []
         correct = []
