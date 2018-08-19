@@ -85,7 +85,7 @@ Currently, I have stitched together a pipeline as follows:
 ![alt text][class_balance]
 
 #### 3. Number Reader:
-    20% accurate after ignoring UNKNOWNs (approx = 0.84^9) but correctly labels (70-80% of) individual digits
+    20% accurate - without classifying UNKNOWNs (approx = 0.84^9) but correctly labels (70-80% of) individual digits
     Have used probability threshold for incorrect predictions to classify them as 'UNKNOWN' which is configurable
 
 There's a lot of scope for improvement in terms of: 
