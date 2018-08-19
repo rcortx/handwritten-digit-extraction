@@ -6,7 +6,7 @@
 
 ### Noteworthy reusable code: 
 
-#### unsupervised peak clustering algorithm to remove horizontal/vertical noise from image. Yields pretty good results.
+#### Unsupervised Peak Clustering algorithm to remove horizontal/vertical noise from image. Yields pretty good results.
 
 Run in Jupyter notebook from same directory
 ```
@@ -26,7 +26,7 @@ fig, (ax1, ax2) = plt.subplots(2)
 ax1.imshow(masked, cmap="gray")
 ax2.imshow(thresh, cmap="gray")
 ```
-#### MergedBox and Box wrappers around opencv Bounding Boxes
+#### MergedBox and Box classes as wrappers around opencv Bounding Boxes
 Easy to use and extensive functionality classes that support tree like hierarchy, merging, splitting, etc
 
 Run from CLI in same directory
