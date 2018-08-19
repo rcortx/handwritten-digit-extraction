@@ -72,7 +72,7 @@ Currently, I have stitched together a pipeline as follows:
     Trained only on accurate results from digit extraction algorithm
     (basic LogisticRegression with PCA(n=100)) 83% accuracy on test set, 71% accurate on whole dataset
 
-#####Class Balance histogram:
+##### Class Balance histogram:
 
 ![alt text][class_balance]
 
