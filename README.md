@@ -47,13 +47,14 @@ print(mbox_left.overlap(mbox_right))
 ```
 
 ### Pipeline
-Currently, I have stitched together a pipeline with 
+Currently, I have stitched together a pipeline as follows:
 
-#### 0. Noise Removal:
+#### 0. Noise Removal: Unsupervised Peak Clustering
     performing this via finding and merging peaks on x/y projections with provided threshold and removing noise patterns
 
+
 #### 1. Unsupervised digit bounding box extraction: 
-    80% accurate over 1% baseline accuracy
+    80% accurate on 5998 image dataset (detecting bounding boxes equal to number of digits in label)
     - performing this via merging and splitting Boxes with appropriate heuristics
     - Noticing that boxes will form a tree like heirarchy in an image, merging and splitting until optimum segmentation is achieved
         features were engineered which have high predictivity for finding merge and split candidates. 
@@ -61,6 +62,7 @@ Currently, I have stitched together a pipeline with
         over these features
 
 #### 2. Digit Classifier: 
+    Trained only on accuracte results from digit extraction algorithm
     (basic LogisticRegression with PCA(n=100)) 83% accuracy on test set, 71% accurate on whole dataset
 
 #### 3. Number Reader:
@@ -82,6 +84,7 @@ There's a lot of scope for improvement in terms of:
 1. Using moving window classifier to detect digits boundaries and digits
 2. Using LSTM with Connectionist Temporal Classification (CTC)
 3. Autoencoders: encoder/decoder-type approach
+4. Stroke completion algorithm to complete faded/unclear digits
 
 #### Some messy research notes:
 https://docs.google.com/spreadsheets/d/19vBYosoy1mu7PmBCad_bZ8mePfNMGFI1C2KPwpiBASM/edit?usp=sharing
@@ -106,7 +109,7 @@ OR
 ##### return label after applying probability threshold, 'UNKNOWN' for uncertain
 ```
 >>> nr.read_from_filename("regions/20111823_6884a0.png")
-`'UNKNOWN'`
+'UNKNOWN'
 ```
 ##### return uncertain label instead of 'UNKNOWN' for inspection (how many digits were predicted correctly)
 ```
