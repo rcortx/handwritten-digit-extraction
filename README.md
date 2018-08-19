@@ -79,6 +79,7 @@ There's a lot of scope for improvement in terms of:
 5. adding dual digit detection classes to detect conjoined digits i.e. (00) and generating data by merging two individual digits
 6. improving Bounding box clustering by leveraging the engineered features with a clustering algorithm like DBSCAN, agglomerative
 7. Using trained classifier to generate digit boundary scores (on areas of low threshold probabilities)
+8. Merge and Split routines can be improved by tuning thresholds further or adding more filters
 
 #### - Changing Architecture:
 1. Using moving window classifier to detect digits boundaries and digits
