@@ -234,7 +234,7 @@ class NumberReader(object):
         print("unknowns: {} - {}%; count: {}".format(len(unknowns), len(unknowns)/count*100, count))
         print("correct: {} - {}%; count: {}".format(len(correct), len(correct)/count*100, count))
 
-    def generate_prediction_probability_stats(self, images_gray, labels):
+    def generate_prediction_probability_stats(self, images_gray, labels, return_proba=False):
         """generates digit probability score stats for incorrect and correct labels
         Used to compute viable thresholds
 
@@ -242,6 +242,7 @@ class NumberReader(object):
         """
         incorrect = []
         correct = []
+        count = 0
         for i, (img_g, label) in enumerate(zip(images_gray, labels)):
             predicted, probabilities = self.read_from_grayscale_with_proba(img_g)
             if predicted == label or predicted == NumberReader.UNKNOWN_LABEL:
@@ -249,6 +250,9 @@ class NumberReader(object):
             else:
                 incorrect.append((i, label, predicted, probabilities))
             count += 1
+
+        if return_proba:
+            return correct, incorrect
             
         correct_digit_count = 0
         incorrect_digit_count = 0
@@ -1104,9 +1108,9 @@ def filter_horizontal_noise_yaxis_projection(project_img, mask_img):
     
     mx_w_ind = np.argmax(peak_widths_l)
     st, en = starts[mx_w_ind], ends[mx_w_ind]
-    
-    mask_img[:st, :] = 0
-    mask_img[en:, :] = 0
+
+    mask_img[:int(st), :] = 0
+    mask_img[int(en):, :] = 0
     
 
 def filter_vertical_noise_xaxis_projection(project_img, mask_img):
@@ -1128,11 +1132,11 @@ def filter_vertical_noise_xaxis_projection(project_img, mask_img):
         if 0 <cand[1] < 0.6 * mean_width and mean_height * 1.5 < project[cand[0]]:
             # if candidate is on left of image
             if cand[-1] < (project_img.shape[1] / 2):
-                mask_img[:, cand[-2]:cand[-1]] = 0
+                mask_img[:, int(cand[-2]):int(cand[-1])] = 0
             # else candidate is on right of image
             else: 
                 # TODO: merge filters
-                mask_img[:, cand[-2]:cand[-1]] = 0
+                mask_img[:, int(cand[-2]):int(cand[-1])] = 0
 
 
 def get_contour_bounding_boxes(img, draw_img=None):

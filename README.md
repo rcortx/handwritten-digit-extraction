@@ -113,7 +113,7 @@ https://docs.google.com/spreadsheets/d/19vBYosoy1mu7PmBCad_bZ8mePfNMGFI1C2KPwpiB
 ```
 git clone https://github.com/rbcorx/handwritten-digit-extraction
 ``` 
-Env: python 3.5.2
+Env: python 3.5.2 (setup Anaconda: strongly recommended)
 ```
 cd handwritten-digit-extraction
 
@@ -121,7 +121,13 @@ cd handwritten-digit-extraction
 OR
 `pip install -r requirements_compressed.txt`
 ```
-##### Use:
+##### Install OpenCV (Using Anaconda)
+
+```
+conda install opencv
+```
+
+##### Use: (Run `pythonw` on MAC as matplotlib requires python to be installed as a framework)
 ```
 >>> from aggregated_pipeline import NumberReader
 >>> nr = NumberReader()
