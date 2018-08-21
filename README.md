@@ -99,6 +99,7 @@ There's a lot of scope for improvement in terms of:
 6. Improving Bounding box clustering by leveraging the engineered features with a clustering algorithm like DBSCAN, agglomerative
 7. Using trained classifier to generate digit boundary scores (on areas of low threshold probabilities)
 8. Merge and Split routines can be improved by tuning thresholds further or adding more filters
+9. Training a classifier to detect incorrect classifications by feeding training data engineered from probability scores, maximum classwise probability, mean and std deviation, class balance history, past mistake history, raw image data, other engineered features, etc to generate a probability of a digit/number classification being correct. (This should be able to detect things like 1 being likely to be mistaken as 0, 5 being likely to be mistaken as 2, so if probability scores of 5 and 2 are comparable, this is an uncertain classification)
 
 #### - Changing Architecture:
 1. Using moving window classifier to detect digits boundaries and digits
