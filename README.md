@@ -106,6 +106,7 @@ There's a lot of scope for improvement in terms of:
 2. Using LSTM with Connectionist Temporal Classification (CTC)
 3. Autoencoders: encoder/decoder-type approach
 4. Stroke completion algorithm to complete faded/unclear digits
+5. Investigate YOLO and region proposals, single shot algorihtms
 
 #### Some messy research notes:
 https://docs.google.com/spreadsheets/d/19vBYosoy1mu7PmBCad_bZ8mePfNMGFI1C2KPwpiBASM/edit?usp=sharing
