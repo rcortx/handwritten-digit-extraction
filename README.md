@@ -1,7 +1,7 @@
 # Reading a handwritten number from an image of a form
 
 ### Problem Statement
-Read a hand written number on different types of physical forms. Number may be of arbitary denomination (length), is not OCR friendly (enclosed within printed boxes - check below) and may contain noise.
+Read a hand written number on different types of physical forms. Number may be of arbitary denomination (length), is not OCR friendly (is not enclosed within printed boxes - check below) and may contain noise.
 cost of misclassification is 100 times than that of classifying a number as UNKNOWN
 
 Relevant Metrics:
