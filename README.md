@@ -98,7 +98,7 @@ print(mbox_left.overlap(mbox_right))
 
 #### 3. Number Reader:
     Since cost of misclassification is 100 times than that of classifying a number as UNKNOWN, probability thresholding is used to ensure classifier is certain about it's prediction for the entire number.
-    95%+ accurate - while rejecting UNKNOWNs (for unsure classifications) (approx = 0.97^9) but correctly labels (94%) individual digits
+    95%+ accurate - while rejecting UNKNOWNs (for unsure classifications) (18% UNKNOWNs, approx = 1 - 0.97^9) but correctly labels (94%) individual digits
 
 There's a lot of scope for improvement in terms of: 
 
