@@ -11,11 +11,11 @@ Use:
 
 # return label after applying probability threshold, 'UNKNOWN' for uncertain
 >>> nr.read_from_filename("regions/20111823_6884a0.png")
-'UNKNOWN'
+'20111823'
 
 # return uncertain label instead of 'UNKNOWN' for inspection (how many digits were predicted correctly)
 >>> nr.read_from_filename("regions/20111823_6884a0.png", thresh=False)
-'20111223'
+'20111823'
 """
 
 import os
@@ -30,6 +30,7 @@ from scipy import stats
 from scipy.signal import find_peaks, peak_widths, peak_prominences
 import cv2
 from sklearn import svm, linear_model, preprocessing, metrics, model_selection, decomposition
+from tensorflow import keras
 
 DIR = "regions"
 dig_classes = 10
@@ -54,6 +55,37 @@ def timeit(func, label=None, verbose=True):
         return ret
     return func_caller
 
+
+class CNNDigitClassifier(object):
+    """Classifies separated digit of a number using a CNN classifier."""
+    
+    MODEL_FN = "keras_model_saved_20.h5"
+    
+    def __init__(self, trained_model=None):
+        if not trained_model:
+            self.load()
+        else: self.model = trained_model
+            
+    def load(self):
+        self.model = keras.models.load_model(CNNDigitClassifier.MODEL_FN)
+    
+    def preprocess_data(self, X):
+        n_samples = len(X)
+        reshaped_X = []
+        for x in X:
+            reshaped_X.append(np.reshape(x, (MergedBox.MAX_HEIGHT, MergedBox.MAX_WIDTH, 1)))
+        X = np.array(reshaped_X)
+        return X
+
+    def predict(self, X):
+        probas = self.predict_probabilities(X)
+        return [np.argmax(p) for p in probas]
+    
+    def predict_probabilities(self, X):
+        """returns predicted probabilities instead of classes"""
+        X = self.preprocess_data(X)
+        return self.model.predict(X)
+ 
 
 class DigitClassifier(object):
     """Classifies separated digit of a number
@@ -168,11 +200,11 @@ class NumberReader(object):
     THRESH_99 = 0.948026661481
     THRESH_CORRECT_PROB_MU = 0.805628253442
     THRESH_INCORRECT_PROB_MU = 0.597240586805
-    THRESH_INCORRECT_TEST = 0.75
+    THRESH_INCORRECT_TEST = 0.5
     UNKNOWN_LABEL = "UNKNOWN"
     
     def __init__(self, digit_classifier=None):
-        self.digit_classifier = digit_classifier if digit_classifier else DigitClassifier()
+        self.digit_classifier = digit_classifier if digit_classifier else CNNDigitClassifier()
     
     def read_from_grayscale(self, image_gray):
         """image_gray has to be in grayscale"""
@@ -194,7 +226,7 @@ class NumberReader(object):
         predictions = list(map(lambda x: np.argmax(x), probs))
         mxp = list(map(lambda x: x[np.argmax(x)], probs))
         
-        if all(map(lambda x: x>NumberReader.THRESH_INCORRECT_PROB_MU, mxp)):
+        if all(map(lambda x: x>NumberReader.THRESH_INCORRECT_TEST, mxp)):
             res = "".join(map(str, predictions))
         else:
             res = NumberReader.UNKNOWN_LABEL

@@ -1,10 +1,24 @@
-# Reading a handwritten number from an image
+# Reading a handwritten number from an image of a form
 
-### Note: All code has been moved to `aggregated_pipeline.py` for faster review
+### Problem Statement
+Read a hand written number on different types of physical forms. Number may be of arbitary denomination (length), is not OCR friendly (enclosed within printed boxes - check below) and may contain noise.
+cost of misclassification is 100 times than that of classifying a number as UNKNOWN
 
-#### `data_exploration.ipynb` contains data exploration, visualizations and experimentations with same code but is dirty and un-refactored
+Relevant Metrics:
+- *Correct Classifications:* the predicted number matches the expected number exactly
+- *UNKNOWNs:* predicted number could not be determined reliably
+- *Misclassifications:* algorithm predicted number XYZ but the expected number was different.
 
-### Noteworthy reusable code: 
+The *cost of a misclassification is 100x the cost of UNKNOWN* (heavily prefer UNKNOWN to mispredictions)
+
+### Solution
+*Performance:* 95%+ number reading accuracy while correctly detecting majority of misclassifications as UNKNOWNS.
+
+### Note: All code has been moved to *aggregated_pipeline.py* except CNN architecture and training code which is in *data_exploration.ipynb*
+
+#### *data_exploration.ipynb* contains data exploration, visualizations and experimentations with same code but is dirty and un-refactored
+
+### Framework features (Reusable code): 
 
 #### Unsupervised Peak Clustering algorithm to remove horizontal/vertical noise from image. Yields pretty good results.
 
@@ -56,7 +70,6 @@ print(mbox_left.overlap(mbox_right))
 ```
 
 ### Pipeline
-Currently, I have stitched together a pipeline as follows:
 
 #### 0. Noise Removal: Unsupervised Peak Clustering
     performing this via finding and merging peaks on x/y projections with provided threshold and removing noise patterns
@@ -64,7 +77,6 @@ Currently, I have stitched together a pipeline as follows:
 ![alt text][noise]
 
 #### 1. Unsupervised digit bounding box extraction: 
-    80% accurate on 5998 image dataset (detecting bounding boxes equal to number of digits in label)
     - First, all contours are detected in an image using opencv and encapsulated in MergedBox/Box classes
     - Performing clustering via merging and splitting Boxes with appropriate heuristics
     - Noticing that boxes will form a tree like hierarchy in an image, merging and splitting until optimum segmentation is achieved
@@ -76,22 +88,22 @@ Currently, I have stitched together a pipeline as follows:
 
 ![alt text][dig_sep]
 
-#### 2. Digit Classifier: 
+#### 2. Digit Classifier: (CNN)
     Trained only on accurate results from digit extraction algorithm
-    (basic LogisticRegression with PCA(n=100)) 83% accuracy on test set, 71% accurate on whole dataset
+    97% accuracy on test set, 94% accurate on whole dataset
 
 ##### Class Balance histogram:
 
 ![alt text][class_balance]
 
 #### 3. Number Reader:
-    20% accurate - without classifying UNKNOWNs (approx = 0.84^9) but correctly labels (70-80% of) individual digits
-    Have used probability threshold for incorrect predictions to classify them as 'UNKNOWN' which is configurable
+    Since cost of misclassification is 100 times than that of classifying a number as UNKNOWN, probability thresholding is used to ensure classifier is certain about it's prediction for the entire number.
+    95%+ accurate - while rejecting UNKNOWNs (for unsure classifications) (approx = 0.97^9) but correctly labels (94%) individual digits
 
 There's a lot of scope for improvement in terms of: 
 
 #### - Improving this Architecture: 
-1. Better classifier model like CNNs
+1. Improving CNN model architecture
 2. Augmenting data to increase classification accuracy
 3. MNIST pretrained models deep learning (transfer learning)
 4. Adding two new output classes: digit-boundary class and double-digit class and generating training data for both
@@ -106,7 +118,7 @@ There's a lot of scope for improvement in terms of:
 2. Using LSTM with Connectionist Temporal Classification (CTC)
 3. Autoencoders: encoder/decoder-type approach
 4. Stroke completion algorithm to complete faded/unclear digits
-5. Investigate YOLO and region proposals, single shot algorihtms
+5. Investigate YOLO and region proposals, single shot algorithms
 
 #### Some messy research notes:
 https://docs.google.com/spreadsheets/d/19vBYosoy1mu7PmBCad_bZ8mePfNMGFI1C2KPwpiBASM/edit?usp=sharing
@@ -137,12 +149,12 @@ conda install opencv
 ##### return label after applying probability threshold, 'UNKNOWN' for uncertain
 ```
 >>> nr.read_from_filename("regions/20111823_6884a0.png")
-'UNKNOWN'
+'20111823'
 ```
 ##### return uncertain label instead of 'UNKNOWN' for inspection (how many digits were predicted correctly)
 ```
 >>> nr.read_from_filename("regions/20111823_6884a0.png", thresh=False)
-'20111223'
+'20111823'
 ```
 
 ### Images:
