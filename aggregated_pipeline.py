@@ -262,9 +262,9 @@ class NumberReader(object):
             else:
                 incorrect.append((i, label, predicted))
             count += 1
-        print("incorrect: {} - {}%; count: {}".format(len(incorrect), len(incorrect)/count*100, count))
-        print("unknowns: {} - {}%; count: {}".format(len(unknowns), len(unknowns)/count*100, count))
-        print("correct: {} - {}%; count: {}".format(len(correct), len(correct)/count*100, count))
+        print("incorrect: {} - {}%; count: {}".format(len(incorrect), len(incorrect)/float(count)*100, count))
+        print("unknowns: {} - {}%; count: {}".format(len(unknowns), len(unknowns)/float(count)*100, count))
+        print("correct: {} - {}%; count: {}".format(len(correct), len(correct)/float(count)*100, count))
 
     def generate_prediction_probability_stats(self, images_gray, labels, return_proba=False):
         """generates digit probability score stats for incorrect and correct labels
@@ -726,7 +726,7 @@ class MergedBox(object):
             for i in range(1, len(flat)):
                 # distance is -ve of overlap
                 distances.append(-flat[i-1].overlap(flat[i]))
-                rel_heights.append(heights[i-1]/heights[i] if heights[i-1] < heights[i] else heights[i]/heights[i-1])
+                rel_heights.append(heights[i-1]/float(heights[i]) if heights[i-1] < heights[i] else heights[i]/float(heights[i-1]))
             
             if peaks:
                 p_i = 0
@@ -744,7 +744,7 @@ class MergedBox(object):
                             pass
                         p_i += 1
                 peak_counts = [len(x) for x in peaks_in_boxes]
-                peak_imp = [(int(sum(list(zip(*x))[1])/1) if x else 0) for x in peaks_in_boxes]
+                peak_imp = [(int(sum(list(zip(*x))[1])/1.) if x else 0) for x in peaks_in_boxes]
 
         hrep = "Height(Mean: {}, std: {})".format(h_mean, h_std)
         wrep = "Width(Mean: {}, std: {})".format(w_mean, w_std)
@@ -789,15 +789,19 @@ class MergedBox(object):
         """opposite of overlap: convenience function"""
         return -self.overlap(other)
 
-    def cut_from_image(self, image):
+    def cut_from_image(self, image, mx_width=None, mx_height=None, discard_extra_crop=False, resize_no_aspect_maintain=False):
         """Cut flattened Box constituents from provided image to generate same size digit training data
         
         Only cuts detected contours with no extra area and minimizes noise added
         
         Returns newly created np array of shape (MergedBox.MAX_WIDTH, MergedBox.MAX_HEIGHT)
         """
-        MergedBox.MAX_HEIGHT
-        MergedBox.MAX_WIDTH
+        if not mx_width:
+            mx_width = MergedBox.MAX_WIDTH
+        if not mx_height:
+            mx_height = MergedBox.MAX_HEIGHT
+        
+        
         x_start = self.box[0]
         y_start = self.box[1]
         width = self.box[2]
@@ -805,20 +809,77 @@ class MergedBox(object):
         constituent_boxes = self.flatten()
     
         # Note: image height and width are reversed in numpy as height corresponds to num rows: axis 0
-        cut_img = np.zeros(shape=(MergedBox.MAX_HEIGHT, MergedBox.MAX_WIDTH), dtype=np.uint8)
+        cut_img = np.zeros(shape=(mx_height, mx_width), dtype=np.uint8)
         # dealing with anomally: single digit width > MAX_WIDTH
-        if width > MergedBox.MAX_WIDTH:
-            # print("box width anomally! Truncating box")
-            constituent_boxes = [Box([x_start, y_start, MergedBox.MAX_WIDTH, height, ]), ]
-            width = MergedBox.MAX_WIDTH
-        # centering training data
-        w_offset = (MergedBox.MAX_WIDTH - width) // 2
-        h_offset = (MergedBox.MAX_HEIGHT - height) // 2
+        # TODO: center cut/resize appropriately
+        # if width > mx_width:
+        #     # print("box width anomally! Truncating box")
+        #     constituent_boxes = [Box([x_start, y_start, mx_width, height]), ]
+        #     width = mx_width
+        # # dealing with anomally: single digit height > MAX_height
+        # if height > mx_height:
+        #     # print("box width anomally! Truncating box")
+        #     constituent_boxes = [Box([x_start, y_start, width, mx_height]), ]
+        #     height = mx_height
 
+        digit_img = self.get_from_image(image)
+        # TODO: keep aspect ratio
+        #     try not cutting the image
+        #     perform maximum required image compression
+        # NOTE: this introduces size imbalance in the data
+        #     alternative: resize bounding box so that it's limits are 
+        #    can CNN be trained to be digit size independent repr.?
+        #    difference between smaller 1 and larger 1?
+        #    Is this the reason for CNN performance issues and misclassifications?
+        
+        if resize_no_aspect_maintain:
+            # return image after resizing to target size without maintaining aspect ratio
+            return cv2.resize(digit_img, (mx_width, mx_height))
+
+        if discard_extra_crop:
+            # crop image if image larger than target size
+            if width > mx_width:
+                # print("box width anomally! Truncating box")
+                width = mx_width
+            # dealing with anomally: single digit height > MAX_height
+            if height > mx_height:
+                # print("box width anomally! Truncating box")
+                height = mx_height
+        else:
+            # resize image while maintaining aspect ratio if image larger than target size
+            height_ratio = mx_height / float(height)
+            width_ratio = mx_width / float(width)
+
+            if width > mx_width or height > mx_height:
+                target_ratio = 1./max(height_ratio, width_ratio)
+                # resize image without maintaining aspect ratio:
+                # digit_img = cv2.resize(digit_img, (mx_width, mx_height))
+                
+                # resize image while maintaining aspect ration:
+                digit_img = cv2.resize(digit_img, (0, 0), fx=target_ratio, fy=target_ratio)
+                height, width = digit_img.shape
+
+        # centering training data
+        w_offset = (mx_width - width) // 2
+        h_offset = (mx_height - height) // 2
+
+        cut_img[h_offset:height+h_offset, w_offset:width+w_offset] = digit_img[0:height, 0:width]
+
+        # for box in constituent_boxes:
+        #     (x, y, w, h) = box.box
+        #     cut_img[y-y_start+h_offset:y+h-y_start+h_offset, x-x_start+w_offset:x+w-x_start+w_offset] = digit_img[y:y+h, x:x+w]
+
+        return cut_img
+
+    def get_from_image(self, image):
+        x_start = self.box[0]
+        y_start = self.box[1]
+        (x, y, w, h) = self.box
+        constituent_boxes = self.flatten()
+        cut_img = np.zeros(shape=(h, w), dtype=np.uint8)
         for box in constituent_boxes:
             (x, y, w, h) = box.box
-            cut_img[y-y_start+h_offset:y+h-y_start+h_offset, x-x_start+w_offset:x+w-x_start+w_offset] = image[y:y+h, x:x+w]
-
+            cut_img[y-y_start:y+h-y_start, x-x_start:x+w-x_start] = image[y:y+h, x:x+w]
         return cut_img
 
     def peaks(self):
@@ -1053,7 +1114,7 @@ def plot_projections(images_gray, labels=None, n=10, axis=1, plot_diff=False, *a
         scaled_image = blur_img - 255
         project = np.sum(scaled_image, axis=axis)
         
-        process_projection_peaks(project, *reversed(axes), *args, **kwargs)
+        process_projection_peaks(project, *(list(reversed(axes)) + args), **kwargs)
             
         print(labels[i])
         
@@ -1163,7 +1224,7 @@ def filter_vertical_noise_xaxis_projection(project_img, mask_img):
         # TODO: hyperparameters
         if 0 <cand[1] < 0.6 * mean_width and mean_height * 1.5 < project[cand[0]]:
             # if candidate is on left of image
-            if cand[-1] < (project_img.shape[1] / 2):
+            if cand[-1] < (project_img.shape[1] / 2.):
                 mask_img[:, int(cand[-2]):int(cand[-1])] = 0
             # else candidate is on right of image
             else: 
@@ -1237,7 +1298,8 @@ def get_box_reports(clone_masked, bbs):
         breps.append(brep)
         peaks_in_boxes.append([])
         (x, y, w, h) = box
-        w_z_score = (w-w_mean) / w_std
+        # NOTE: convert to float to maintain python2 compatibility
+        w_z_score = (w-w_mean) / float(w_std)
         if w_z_score < 0:
             w_z_score = 0
         while p_i < len(peaks) and peaks[p_i] <= x+w:
@@ -1263,7 +1325,7 @@ def get_split_scores(breps, peaks_in_boxes):
     for x in peaks_in_boxes:
         cur = 0
         if x:
-            cur = sum(list(zip(*x))[1])/1
+            cur = sum(list(zip(*x))[1])/1.
             if not math.isnan(cur):
                   cur = int(cur)
         peak_imp_l.append(cur)
@@ -1278,7 +1340,7 @@ def get_split_scores(breps, peaks_in_boxes):
         hscore = np.sum(heights)
         
         score_1 = peak_counts_l[j]*10 + peak_imp_l[j]
-        score_2 = dscore/3 + bcount*13 + hscore*0.7 + relscore*10
+        score_2 = dscore/3. + bcount*13 + hscore*0.7 + relscore*10
 
         scores.append((score_1, score_2, j))
     return scores
@@ -1374,7 +1436,7 @@ def get_digit_bounding_boxes(
         peak_counts_s = "{} vs found: {}, weights_z: {}".format(
             len(label),
             str(len(bbs)),
-            list(map(lambda x: math.ceil(x*100)/100, stats.zscore(list(map(lambda x: x.varea(), bbs)))))
+            list(map(lambda x: math.ceil(x*100)/100., stats.zscore(list(map(lambda x: x.varea(), bbs)))))
         )
         
         for box in bbs:
@@ -1473,20 +1535,22 @@ def accuracy_boxes(images_gray, labels, baseline=False):
         if processed % 1000 == 0:
             t2 = time.time()
             print("1000 processed in time: {0:.2f}s".format(t2-t1))
-            print("% incorrect: {0:.2f}".format(incorrect/processed*100))
+            print("% incorrect: {0:.2f}".format(incorrect/float(processed)*100))
     t2 = time.time()
     print("Net processing time: {0:.2f}s".format(t2-t1))
-    print("% NET ERROR RATE: {0:.2f}".format(incorrect/processed*100))
+    print("% NET ERROR RATE: {0:.2f}".format(incorrect/float(processed)*100))
     print("Max width, height of digits: ", mxw, mxh)
 
 
-def get_separated_digits(image_gray):
+def get_separated_digits(image_gray, ret_boxes=False, mx_width=None, mx_height=None):
     """given a grayscale number image, returns separated and normalized digit image clips"""
     thresh, blur_img = image_augmentation_pipeline(image_gray)
     clone, boxes = get_digit_bounding_boxes(thresh, blur_img, debug=False, return_clone=True)
+    if ret_boxes:
+        return clone, boxes
     digit_images = []
     for box in boxes:
-        digit_images.append(box.cut_from_image(clone))
+        digit_images.append(box.cut_from_image(clone, mx_width, mx_height))
     return digit_images
 
 
@@ -1502,7 +1566,7 @@ def generate_digit_training_data(images_gray, labels, limit=10, skip_incorrect_d
     if cache and os.path.isfile(training_data_pickle_file):
         with open(training_data_pickle_file, "rb") as fd:
             digit_images, digit_labels, digit_ids, skip_count = pickle.load(fd)
-        print("skipped: {}, {}".format(skip_count, skip_count/len(labels)*100))
+        print("skipped: {}, {}".format(skip_count, skip_count/float(len(labels))*100))
         return digit_images, digit_labels, digit_ids
 
     digit_images = []
@@ -1536,7 +1600,7 @@ def generate_digit_training_data(images_gray, labels, limit=10, skip_incorrect_d
     if cache:
         with open(training_data_pickle_file, "wb") as fd:
             pickle.dump([digit_images, digit_labels, digit_ids, skip_count], fd)
-    print("Numbers skipped due to inaccuracies: {}, {:.2f}%".format(skip_count, (skip_count/limit)*100))
+    print("Numbers skipped due to inaccuracies: {}, {:.2f}%".format(skip_count, (skip_count/float(limit))*100))
 
     return digit_images, digit_labels, digit_ids
 
