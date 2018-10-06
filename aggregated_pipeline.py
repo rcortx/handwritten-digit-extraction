@@ -1407,6 +1407,17 @@ def box_filter_routines(bbs):
     return [bb for bb in bbs if is_not_horizontal_noise(bb)]
 
 
+def box_post_filter_routines(bbs):
+    # TODO: DEBUG: experimental filter logic
+    # remove horizontal noise:
+    mean_ar = np.mean([b.area() for b in bbs])
+
+    def is_not_too_small(bb):
+        return bb.area() > mean_ar / 3.0
+    
+    return [bb for bb in bbs if is_not_too_small(bb)]
+
+
 def get_digit_bounding_boxes(
     thresh, blur_img, debug=False, pyplot_axis_res=None,
     pyplot_axis_prev=None, label=None, return_clone=False):
@@ -1438,6 +1449,9 @@ def get_digit_bounding_boxes(
 
     # Box SPLIT routines: canny peaks counts/importance, box width Gauss filter
     bbs = box_split_routine(clone_masked, bbs)
+
+    # TODO: DEBUG: EXPERIMENTAL
+    bbs = box_post_filter_routines(bbs)
 
     if debug:
         # DEBUG: image labels
