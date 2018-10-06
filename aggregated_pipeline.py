@@ -851,7 +851,7 @@ class MergedBox(object):
             width_ratio = mx_width / float(width)
 
             if width > mx_width or height > mx_height:
-                target_ratio = 1./max(height_ratio, width_ratio)
+                target_ratio = min(height_ratio, width_ratio)
                 # resize image without maintaining aspect ratio:
                 # digit_img = cv2.resize(digit_img, (mx_width, mx_height))
                 
@@ -862,7 +862,6 @@ class MergedBox(object):
         # centering training data
         w_offset = (mx_width - width) // 2
         h_offset = (mx_height - height) // 2
-
         cut_img[h_offset:height+h_offset, w_offset:width+w_offset] = digit_img[0:height, 0:width]
 
         # for box in constituent_boxes:
@@ -1399,6 +1398,15 @@ def box_split_routine(clone_masked, bbs):
     return bbsnew
 
 
+def box_filter_routines(bbs):
+    # TODO: DEBUG: experimental filter logic
+    # remove horizontal noise:
+    def is_not_horizontal_noise(bb):
+        return bb.box[2] < 2 * bb.box[3] or bb.box[3] > 5
+
+    return [bb for bb in bbs if is_not_horizontal_noise(bb)]
+
+
 def get_digit_bounding_boxes(
     thresh, blur_img, debug=False, pyplot_axis_res=None,
     pyplot_axis_prev=None, label=None, return_clone=False):
@@ -1424,6 +1432,8 @@ def get_digit_bounding_boxes(
         boxes = get_contour_bounding_boxes(masked)
     
     bbs = list(map(MergedBox, boxes))
+    # TODO: DEBUG: EXPERIMENTAL
+    bbs = box_filter_routines(bbs)
     bbs = box_merge_routines(bbs)
 
     # Box SPLIT routines: canny peaks counts/importance, box width Gauss filter
@@ -1546,11 +1556,11 @@ def get_separated_digits(image_gray, ret_boxes=False, mx_width=None, mx_height=N
     """given a grayscale number image, returns separated and normalized digit image clips"""
     thresh, blur_img = image_augmentation_pipeline(image_gray)
     clone, boxes = get_digit_bounding_boxes(thresh, blur_img, debug=False, return_clone=True)
-    if ret_boxes:
-        return clone, boxes
     digit_images = []
     for box in boxes:
         digit_images.append(box.cut_from_image(clone, mx_width, mx_height))
+    if ret_boxes:
+        return digit_images, [box.box.box for box in boxes]  # box is instance of MergedBox
     return digit_images
 
 
