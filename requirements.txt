@@ -15,7 +15,7 @@ cffi==1.11.5
 chardet==3.0.4
 cloudpickle==0.5.3
 constantly==15.1.0
-cryptography==2.3
+cryptography==3.2
 cryptography-vectors==2.3
 cycler==0.10.0
 dask==0.18.2
